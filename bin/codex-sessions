@@ -305,7 +305,11 @@ def resolve_session_selector(config: Config, selector: str, match_limit: int = 2
     needle = selector.strip().lower()
     if looks_like_id_fragment(needle):
         matches = [path for path in session_files(config) if needle in path.name.lower()]
-        sessions = [session for path in matches if (session := parse_session(path, names))]
+        sessions = []
+        for path in matches:
+            session = parse_session(path, names)
+            if session:
+                sessions.append(session)
         if sessions:
             return resolve_session(sessions, selector)
     return resolve_session(load_sessions(config, selector, limit=match_limit), selector)
