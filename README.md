@@ -1,13 +1,13 @@
 # codex-session-tools
 
 `codex-session-tools` is a small, relocatable helper for browsing and resuming
-Codex sessions without modifying Codex itself.
+Codex and Claude Code sessions without modifying either tool's session files.
 
 It provides:
 
-- `codex-sessions list` — list recent Codex sessions with time, CWD, and prompt preview
+- `codex-sessions list` — list recent Codex or Claude sessions with time, CWD, and prompt preview
 - `codex-sessions rename` — add human-friendly titles using sidecar metadata
-- `codex-sessions delete` — move session rollout files to a recoverable trash folder
+- `codex-sessions delete` — move session JSONL files to a recoverable trash folder
 - `codex-sessions resume` — resume by UUID, UUID prefix, or unique text fragment
 - `codex-sessions tmux` — tmux two-pane workspace with a session sidebar
 
@@ -43,11 +43,17 @@ Required for core commands (`paths`, `list`, `rename`, `delete`):
   - `$CODEX_HOME/agent/sessions`
   - `~/.codex/sessions`
   - `~/.config/codex/sessions`
+- Or Claude Code session files under one of:
+  - `$CLAUDE_CONFIG_DIR/projects`
+  - `$CLAUDE_HOME/projects`
+  - `~/.claude/projects`
+  - `~/.config/claude/projects`
 
 Required for resume/sidebar workflows:
 
 - Codex installed as `codex`, available at `~/.local/bin/codex`, or configured via `CODEX_BIN=/path/to/codex`
-- A Codex-compatible wrapper can be used by setting `CODEX_BIN` to that executable path or command name
+- Claude Code installed as `claude`, available at `~/.local/bin/claude`, or configured via `CLAUDE_BIN=/path/to/claude`
+- A compatible wrapper can be used by setting `CODEX_BIN` or `CLAUDE_BIN` to that executable path or command name
 - `tmux` for `codex-sessions tmux`
 - A POSIX-compatible shell for tmux pane bootstrap snippets (`sh`, `bash`, or `zsh`)
 
@@ -83,6 +89,14 @@ cs list -n 10
 cs tmux
 ```
 
+Claude Code sessions use the same commands with `--provider claude`:
+
+```bash
+cs --provider claude doctor
+cs --provider claude list -n 10
+cs --provider claude tmux
+```
+
 Without installing:
 
 ```bash
@@ -100,12 +114,22 @@ export CODEX_HOME=/absolute/path/to/codex-home-or-agent
 codex-sessions tmux
 ```
 
+For Claude Code, use:
+
+```bash
+export CLAUDE_BIN=/absolute/path/to/claude
+export CLAUDE_CONFIG_DIR=/absolute/path/to/claude-config
+codex-sessions --provider claude tmux
+```
+
 For machine-local defaults without changing your shell rc, create an ignored local env file next to this repo:
 
 ```bash
 cat > .codex-session-tools.env <<'EOF'
 CODEX_HOME=/absolute/path/to/codex-home-or-agent
 CODEX_BIN=/absolute/path/to/codex-or-compatible-wrapper
+CLAUDE_CONFIG_DIR=/absolute/path/to/claude-config
+CLAUDE_BIN=/absolute/path/to/claude-or-compatible-wrapper
 EOF
 ```
 
@@ -167,15 +191,16 @@ or run directly:
 /path/to/codex-session-tools/bin/codex-sessions tmux
 ```
 
-If someone has a custom `codex()` shell function in their rc file, it is not required by this tool.
-The sidebar resolves Codex through `CODEX_BIN`, `PATH`, or common install locations and sends an absolute binary path when possible. If the wrong executable is selected, set:
+If someone has a custom `codex()` or `claude()` shell function in their rc file, it is not required by this tool.
+The sidebar resolves the selected provider through `CODEX_BIN`/`CLAUDE_BIN`, `PATH`, or common install locations and sends an absolute binary path when possible. If the wrong executable is selected, set:
 
 ```bash
 export CODEX_BIN=/absolute/path/to/codex
+export CLAUDE_BIN=/absolute/path/to/claude
 ```
 
-`CODEX_BIN` is intentionally generic: it may point to `codex` itself or to a
-Codex-compatible wrapper executable. The tool does not hardcode wrapper names.
+`CODEX_BIN` and `CLAUDE_BIN` are intentionally generic: they may point to the real
+CLI or a compatible wrapper executable. The tool does not hardcode wrapper names.
 
 For teams that wrap Codex with `script` for chat logs, ensure the util-linux `script` argument order is correct on that machine. Common Linux form:
 
@@ -193,6 +218,7 @@ Show detected paths and dependency status:
 codex-sessions paths
 codex-sessions doctor
 codex-sessions doctor --strict
+codex-sessions --provider claude doctor
 ```
 
 List sessions:
@@ -202,6 +228,7 @@ codex-sessions list -n 20
 codex-sessions list -q rv_github
 codex-sessions list --long
 codex-sessions list --json
+codex-sessions --provider claude list -n 20
 ```
 
 Rename a session using sidecar metadata:
@@ -216,9 +243,10 @@ Resume a session:
 ```bash
 codex-sessions resume 019eda11
 codex-sessions resume "RPMI telemetry"
+codex-sessions --provider claude resume 5656cd9d
 ```
 
-Trash a session rollout file:
+Trash a session JSONL file:
 
 ```bash
 codex-sessions delete 019eda11
@@ -228,6 +256,7 @@ Launch the tmux sidebar:
 
 ```bash
 codex-sessions tmux
+codex-sessions --provider claude tmux
 ```
 
 Inside an existing tmux session, `tmux` mode splits the current window into panes.
@@ -243,8 +272,8 @@ Outside tmux, it creates a new tmux session with one window and two panes.
 - `c`: clear search filter
 - `R`: refresh cached session list
 - `q`: close the sidebar pane
-- detected tmux prefix + `Left`: focus the sidebar pane from the Codex pane
-- detected tmux prefix + `Right`: focus the Codex pane from the sidebar pane
+- detected tmux prefix + `Left`: focus the sidebar pane from the agent pane
+- detected tmux prefix + `Right`: focus the agent pane from the sidebar pane
 
 The sidebar caches the session list for fast arrow-key navigation. It reloads only on
 search, clear, rename, delete, or manual refresh.
@@ -278,7 +307,7 @@ tmux source-file ~/.tmux.conf
 
 ## Working Directory Prompt
 
-Codex may ask:
+Codex or Claude may ask follow-up questions in the right pane. For example, Codex may ask:
 
 ```text
 Choose working directory to resume this session
@@ -292,14 +321,16 @@ Use the displayed tmux prefix + `Left` to return to the sidebar pane.
 
 ## Safety Model
 
-The tool does not edit Codex rollout JSONL files for normal metadata operations.
+The tool does not edit Codex or Claude session JSONL files for normal metadata operations.
 
 - Custom names are stored in sidecar metadata:
-  - `~/.codex/session-tools/session-names.json`
+  - Codex: `~/.codex/session-tools/session-names.json`
+  - Claude: `~/.claude/session-tools/session-names.json`
 - Delete/trash moves rollout files into:
-  - `~/.codex/session-tools/trash/`
+  - Codex: `~/.codex/session-tools/trash/`
+  - Claude: `~/.claude/session-tools/trash/`
 - Trash operations append a manifest:
-  - `~/.codex/session-tools/trash/manifest.jsonl`
+  - `trash/manifest.jsonl` under the selected provider's state root
 
 Use `--state-root DIR` to keep metadata somewhere else.
 
@@ -312,14 +343,21 @@ codex-sessions --agent-home /path/to/agent paths
 codex-sessions --sessions-root /path/to/sessions list
 codex-sessions --state-root /path/to/state rename <id> "Title"
 codex-sessions tmux --codex-bin /path/to/codex
+codex-sessions --provider claude --agent-home /path/to/.claude paths
+codex-sessions --provider claude tmux --claude-bin /path/to/claude
 ```
 
 Environment variables:
 
+- `CODEX_SESSION_PROVIDER`: default provider, `codex` or `claude`
 - `CODEX_BIN`: explicit Codex binary path
 - `CODEX_HOME`: agent home containing `sessions/`, or CLI home containing `agent/sessions/`
 - `CODEX_SESSIONS_ROOT`: explicit rollout JSONL session root; overrides `CODEX_HOME`
 - `CODEX_SESSION_TOOLS_HOME`: sidecar metadata root
+- `CLAUDE_BIN`: explicit Claude Code binary path
+- `CLAUDE_CONFIG_DIR` or `CLAUDE_HOME`: Claude config dir containing `projects/`
+- `CLAUDE_SESSIONS_ROOT`: explicit Claude JSONL session root; overrides `CLAUDE_CONFIG_DIR`
+- `CLAUDE_SESSION_TOOLS_HOME`: Claude sidecar metadata root
 
 ## Validation Status
 
@@ -330,6 +368,7 @@ This package was smoke-tested in a clean Docker container based on Ubuntu with P
 - `codex-sessions doctor --strict` failing when optional sidebar/resume deps are absent
 - `list`, `rename`, `delete`, and trash manifest using fake session JSONL
 - `resume` using a fake `codex` binary in `PATH`
+- `--provider claude` paths, doctor, list, resume command rendering, and tmux dry-run against local Claude Code JSONL sessions
 
 The tmux sidebar was validated on the host environment where real `tmux` is available.
 
@@ -349,6 +388,13 @@ If not, set:
 
 ```bash
 export CODEX_BIN=/absolute/path/to/codex
+```
+
+For Claude sessions, use:
+
+```bash
+codex-sessions --provider claude resume <id> --print-command
+export CLAUDE_BIN=/absolute/path/to/claude
 ```
 
 ### Sidebar opens but arrows feel slow
@@ -378,6 +424,7 @@ Then override if needed:
 
 ```bash
 codex-sessions --sessions-root /path/to/sessions list -n 20
+codex-sessions --provider claude --sessions-root /path/to/claude/projects list -n 20
 ```
 
 ## Sharing With Teammates
