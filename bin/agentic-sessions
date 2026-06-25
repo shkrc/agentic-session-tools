@@ -28,6 +28,7 @@ from typing import Iterable, Sequence
 UUID_RE = re.compile(
     r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 )
+SUPPORTED_PROVIDERS = ("codex", "claude")
 
 
 @dataclass
@@ -76,13 +77,43 @@ def expand(path: str | Path) -> Path:
 
 def normalize_provider(provider: str) -> str:
     provider = provider.strip().lower()
-    if provider not in {"codex", "claude"}:
+    if provider not in SUPPORTED_PROVIDERS:
         raise SystemExit(f"unsupported provider: {provider}")
     return provider
 
 
+def parse_providers(value: str) -> list[str]:
+    providers: list[str] = []
+    for part in re.split(r"[,\s]+", value.strip().lower()):
+        if not part:
+            continue
+        provider = normalize_provider(part)
+        if provider not in providers:
+            providers.append(provider)
+    if not providers:
+        raise SystemExit("at least one provider is required")
+    return providers
+
+
+def selected_providers(args: argparse.Namespace) -> list[str]:
+    value = getattr(
+        args,
+        "provider",
+        os.environ.get("AGENTIC_SESSION_PROVIDER", os.environ.get("CODEX_SESSION_PROVIDER", "codex,claude")),
+    )
+    return parse_providers(value)
+
+
 def provider_title(provider: str) -> str:
     return "Claude" if provider == "claude" else "Codex"
+
+
+def providers_title(providers: Sequence[str]) -> str:
+    return provider_title(providers[0]) if len(providers) == 1 else "Agentic"
+
+
+def provider_label(provider: str) -> str:
+    return "Cl" if provider == "claude" else "Cx"
 
 
 def session_name_key(provider: str, session_id: str) -> str:
@@ -157,14 +188,8 @@ def default_agent_home(provider: str = "codex") -> Path:
     return candidates[0]
 
 
-def build_config(args: argparse.Namespace) -> Config:
-    provider = normalize_provider(
-        getattr(
-            args,
-            "provider",
-            os.environ.get("AGENTIC_SESSION_PROVIDER", os.environ.get("CODEX_SESSION_PROVIDER", "codex")),
-        )
-    )
+def build_config(args: argparse.Namespace, provider: str | None = None) -> Config:
+    provider = normalize_provider(provider or selected_providers(args)[0])
     agent_home_arg = getattr(args, "agent_home", None)
     sessions_root_arg = getattr(args, "sessions_root", None)
     state_root_arg = getattr(args, "state_root", None)
@@ -194,6 +219,17 @@ def build_config(args: argparse.Namespace) -> Config:
         names_file=state_root / "session-names.json",
         trash_root=state_root / "trash",
     )
+
+
+def build_configs(args: argparse.Namespace) -> list[Config]:
+    return [build_config(args, provider) for provider in selected_providers(args)]
+
+
+def config_for_provider(configs: Sequence[Config], provider: str) -> Config:
+    for config in configs:
+        if config.provider == provider:
+            return config
+    raise SystemExit(f"no config for provider: {provider}")
 
 
 def load_json_object(path: Path) -> dict:
@@ -421,6 +457,20 @@ def load_sessions(config: Config, query: str = "", limit: int = 0, scan_all_prom
     return sessions
 
 
+def load_sessions_from_configs(
+    configs: Sequence[Config], query: str = "", limit: int = 0, scan_all_prompts: bool = False
+) -> list[Session]:
+    sessions: list[Session] = []
+    for config in configs:
+        sessions.extend(
+            load_sessions(config, query, limit=limit, scan_all_prompts=scan_all_prompts)
+        )
+    sessions.sort(key=lambda session: session.modified, reverse=True)
+    if limit:
+        return sessions[:limit]
+    return sessions
+
+
 def session_files(config: Config) -> list[Path]:
     pattern = "*.jsonl" if config.provider == "claude" else "rollout-*.jsonl"
     files = [Path(p) for p in glob.glob(str(config.sessions_root / "**" / pattern), recursive=True)]
@@ -446,6 +496,26 @@ def resolve_session_selector(config: Config, selector: str, match_limit: int = 2
         if sessions:
             return resolve_session(sessions, selector)
     return resolve_session(load_sessions(config, selector, limit=match_limit), selector)
+
+
+def resolve_session_selector_any(configs: Sequence[Config], selector: str, match_limit: int = 200) -> Session:
+    if len(configs) == 1:
+        return resolve_session_selector(configs[0], selector, match_limit)
+    sessions: list[Session] = []
+    needle = selector.strip().lower()
+    for config in configs:
+        names = load_json_object(config.names_file)
+        if looks_like_id_fragment(needle):
+            for path in session_files(config):
+                if needle not in path.name.lower():
+                    continue
+                session = parse_session(path, names, config.provider)
+                if session:
+                    sessions.append(session)
+        else:
+            sessions.extend(load_sessions(config, selector, limit=match_limit))
+    sessions.sort(key=lambda session: session.modified, reverse=True)
+    return resolve_session(sessions[:match_limit] if match_limit else sessions, selector)
 
 
 def session_haystack(session: Session) -> str:
@@ -508,22 +578,22 @@ def print_sessions(sessions: Sequence[Session], long: bool = False, json_output:
             print("no sessions found")
             return
         for s in sessions:
-            print(f"{s.id}  {format_time(s.modified)}  {s.title}")
+            print(f"{s.provider}:{s.id}  {format_time(s.modified)}  {s.title}")
             print(f"  cwd:  {s.cwd or '-'}")
             print(f"  file: {s.path}")
             if s.first_prompt and s.first_prompt != s.title:
                 print(f"  first: {s.first_prompt}")
         return
 
-    title_width = max(20, width - 15 - 18 - 26 - 3)
-    print(f"{'ID':12} {'MODIFIED':16} {'CWD':24} TITLE")
-    print(f"{'-'*12} {'-'*16} {'-'*24} {'-'*min(title_width, 30)}")
+    title_width = max(20, width - 15 - 18 - 26 - 9)
+    print(f"{'PROVIDER':8} {'ID':12} {'MODIFIED':16} {'CWD':24} TITLE")
+    print(f"{'-'*8} {'-'*12} {'-'*16} {'-'*24} {'-'*min(title_width, 30)}")
     if not sessions:
         print("no sessions found")
         return
     for s in sessions:
         print(
-            f"{s.id[:12]:12} {format_time(s.modified):16} {short_cwd(s.cwd):24} {shorten(s.title, title_width)}"
+            f"{s.provider[:8]:8} {s.id[:12]:12} {format_time(s.modified):16} {short_cwd(s.cwd):24} {shorten(s.title, title_width)}"
         )
 
 
@@ -548,17 +618,20 @@ def resolve_session(sessions: Sequence[Session], selector: str) -> Session:
 
 
 def command_list(args: argparse.Namespace) -> int:
-    config = build_config(args)
-    sessions = load_sessions(config, args.query or "", limit=args.limit, scan_all_prompts=args.scan_all_prompts)
+    configs = build_configs(args)
+    sessions = load_sessions_from_configs(
+        configs, args.query or "", limit=args.limit, scan_all_prompts=args.scan_all_prompts
+    )
     print_sessions(sessions, long=args.long, json_output=args.json)
     return 0
 
 
 def command_rename(args: argparse.Namespace) -> int:
-    config = build_config(args)
-    session = resolve_session_selector(config, args.selector, args.match_limit)
+    configs = build_configs(args)
+    session = resolve_session_selector_any(configs, args.selector, args.match_limit)
+    config = config_for_provider(configs, session.provider)
     names = load_json_object(config.names_file)
-    key = session_name_key(config.provider, session.id)
+    key = session_name_key(session.provider, session.id)
     title = args.title.strip()
     if not title:
         names.pop(key, None)
@@ -567,7 +640,7 @@ def command_rename(args: argparse.Namespace) -> int:
         names[key] = {
             "title": title,
             "updated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
-            "provider": config.provider,
+            "provider": session.provider,
             "session_path": str(session.path),
         }
         action = "renamed"
@@ -609,8 +682,9 @@ def move_to_trash(config: Config, session: Session) -> Path:
 
 
 def command_delete(args: argparse.Namespace) -> int:
-    config = build_config(args)
-    session = resolve_session_selector(config, args.selector, args.match_limit)
+    configs = build_configs(args)
+    session = resolve_session_selector_any(configs, args.selector, args.match_limit)
+    config = config_for_provider(configs, session.provider)
     if not args.yes:
         answer = input(f"Move session {session.id} ({session.title}) to trash? [y/N] ").strip().lower()
         if answer not in {"y", "yes"}:
@@ -622,9 +696,9 @@ def command_delete(args: argparse.Namespace) -> int:
 
 
 def command_resume(args: argparse.Namespace) -> int:
-    config = build_config(args)
-    session = resolve_session_selector(config, args.selector, args.match_limit)
-    command = resume_command(config.provider, agent_bin_for(args, config.provider), session.id)
+    configs = build_configs(args)
+    session = resolve_session_selector_any(configs, args.selector, args.match_limit)
+    command = resume_command(session.provider, agent_bin_for(args, session.provider), session.id)
     if args.print_command:
         print(" ".join(shell_quote(part) for part in command))
         return 0
@@ -633,39 +707,54 @@ def command_resume(args: argparse.Namespace) -> int:
 
 
 def command_paths(args: argparse.Namespace) -> int:
-    config = build_config(args)
-    print(f"provider={config.provider}")
-    print(f"agent_home={config.agent_home}")
-    print(f"sessions_root={config.sessions_root}")
-    print(f"state_root={config.state_root}")
-    print(f"names_file={config.names_file}")
-    print(f"trash_root={config.trash_root}")
+    configs = build_configs(args)
+    for index, config in enumerate(configs):
+        if index:
+            print()
+        print(f"provider={config.provider}")
+        print(f"agent_home={config.agent_home}")
+        print(f"sessions_root={config.sessions_root}")
+        print(f"state_root={config.state_root}")
+        print(f"names_file={config.names_file}")
+        print(f"trash_root={config.trash_root}")
     return 0
 
 
 def command_doctor(args: argparse.Namespace) -> int:
-    config = build_config(args)
-    agent_bin = agent_bin_for(args, config.provider)
-    agent_bin_ok = command_is_available(agent_bin) or bool(os.environ.get("CLAUDE_BIN" if config.provider == "claude" else "CODEX_BIN"))
     core_checks = [
         ("python", sys.executable, True),
         ("python-curses", "stdlib curses import", True),
-        ("sessions_root", str(config.sessions_root), config.sessions_root.exists()),
-    ]
-    optional_checks = [
-        (
-            config.provider,
-            agent_bin,
-            agent_bin_ok,
-            f"required for resume/tmux Enter; {('CLAUDE_BIN' if config.provider == 'claude' else 'CODEX_BIN')} is trusted if set",
-        ),
-        ("tmux", shutil.which("tmux") or "tmux", shutil.which("tmux") is not None, "required for tmux sidebar"),
     ]
     core_ok = True
     for name, value, passed in core_checks:
         status = "ok" if passed else "missing"
         print(f"{status:8} required {name:16} {value}")
         core_ok = core_ok and passed
+
+    configs = build_configs(args)
+    for config in configs:
+        passed = config.sessions_root.exists()
+        status = "ok" if passed else "missing"
+        print(f"{status:8} required {config.provider + '_sessions':16} {config.sessions_root}")
+        core_ok = core_ok and passed
+
+    optional_checks = []
+    for config in configs:
+        agent_bin = agent_bin_for(args, config.provider)
+        agent_bin_ok = command_is_available(agent_bin) or bool(
+            os.environ.get("CLAUDE_BIN" if config.provider == "claude" else "CODEX_BIN")
+        )
+        optional_checks.append(
+            (
+                config.provider,
+                agent_bin,
+                agent_bin_ok,
+                f"required for resume/tmux Enter; {('CLAUDE_BIN' if config.provider == 'claude' else 'CODEX_BIN')} is trusted if set",
+            )
+        )
+    optional_checks.append(
+        ("tmux", shutil.which("tmux") or "tmux", shutil.which("tmux") is not None, "required for tmux sidebar")
+    )
     optional_ok = True
     for name, value, passed, note in optional_checks:
         status = "ok" if passed else "missing"
@@ -770,8 +859,8 @@ def tmux_prefix_key(default: str = "prefix") -> str:
     return prefix or default
 
 
-def right_pane_help_command(provider: str) -> str:
-    title = provider_title(provider)
+def right_pane_help_command(providers: Sequence[str]) -> str:
+    title = providers_title(providers)
     return """prefix="$(tmux show-option -gqv prefix 2>/dev/null || true)"
 [ -n "$prefix" ] || prefix="prefix"
 cat <<AGENTIC_SESSIONS_HELP
@@ -795,10 +884,10 @@ AGENTIC_SESSIONS_HELP
 exec "${SHELL:-/bin/bash}" -l"""
 
 
-def print_right_pane_help(provider: str) -> None:
+def print_right_pane_help(providers: Sequence[str]) -> None:
     prefix = tmux_prefix_key()
     print(
-        f"{provider_title(provider)} Sessions tmux workspace\n\n"
+        f"{providers_title(providers)} Sessions tmux workspace\n\n"
         "Sidebar keys:\n"
         "  j/k or arrows : move\n"
         "  Enter         : resume here\n"
@@ -816,9 +905,15 @@ def print_right_pane_help(provider: str) -> None:
 
 
 def sidebar_shell_command(
-    script: str, right_pane: str, codex_bin: str, claude_bin: str, python_bin: str, config: Config
+    script: str,
+    right_pane: str,
+    codex_bin: str,
+    claude_bin: str,
+    python_bin: str,
+    provider_text: str,
+    config: Config | None,
 ) -> str:
-    return (
+    command = (
         "log=/tmp/agentic-sessions-sidebar-${TMUX_PANE#%}.log; "
         "while [ \"$(tmux display-message -p -t "
         + shell_quote(right_pane)
@@ -827,13 +922,19 @@ def sidebar_shell_command(
         + " "
         + shell_quote(script)
         + " --provider "
-        + shell_quote(config.provider)
-        + " --agent-home "
-        + shell_quote(str(config.agent_home))
-        + " --sessions-root "
-        + shell_quote(str(config.sessions_root))
-        + " --state-root "
-        + shell_quote(str(config.state_root))
+        + shell_quote(provider_text)
+    )
+    if config is not None:
+        command += (
+            " --agent-home "
+            + shell_quote(str(config.agent_home))
+            + " --sessions-root "
+            + shell_quote(str(config.sessions_root))
+            + " --state-root "
+            + shell_quote(str(config.state_root))
+        )
+    return (
+        command
         + " sidebar --target-pane "
         + shell_quote(right_pane)
         + " --codex-bin "
@@ -846,26 +947,30 @@ def sidebar_shell_command(
 
 def command_tmux(args: argparse.Namespace) -> int:
     ensure_tmux()
-    config = build_config(args)
+    providers = selected_providers(args)
+    provider_text = ",".join(providers)
+    frozen_config = build_config(args, providers[0]) if len(providers) == 1 else None
     script = str(Path(__file__).resolve())
     python_bin = sys.executable or "python3"
     session_name = args.name
     width = str(args.width)
-    placeholder = right_pane_help_command(config.provider)
+    placeholder = right_pane_help_command(providers)
 
     if args.dry_run:
         print("# tmux commands that would be used")
 
     if os.environ.get("TMUX") and not args.new_session:
         if not args.dry_run:
-            print_right_pane_help(config.provider)
+            print_right_pane_help(providers)
         right_pane = subprocess.run(
             ["tmux", "display-message", "-p", "#{pane_id}"],
             text=True,
             check=True,
             capture_output=True,
         ).stdout.strip()
-        sidebar_cmd = sidebar_shell_command(script, right_pane, args.codex_bin, args.claude_bin, python_bin, config)
+        sidebar_cmd = sidebar_shell_command(
+            script, right_pane, args.codex_bin, args.claude_bin, python_bin, provider_text, frozen_config
+        )
         if args.dry_run:
             print(f"# inside tmux: split current window; target right pane is {right_pane}")
             run_tmux(["split-window", "-h", "-b", "-l", width, "-t", right_pane, sidebar_cmd], True)
@@ -875,7 +980,7 @@ def command_tmux(args: argparse.Namespace) -> int:
         run_tmux(["select-pane", "-t", right_pane])
         return 0
 
-    run_tmux(["new-session", "-d", "-s", session_name, "-n", config.provider, placeholder], args.dry_run)
+    run_tmux(["new-session", "-d", "-s", session_name, "-n", provider_text, placeholder], args.dry_run)
     if args.dry_run:
         print("# plus: capture right pane id, split left, attach")
         return 0
@@ -885,7 +990,9 @@ def command_tmux(args: argparse.Namespace) -> int:
         check=True,
         capture_output=True,
     ).stdout.strip()
-    sidebar_cmd = sidebar_shell_command(script, right_pane, args.codex_bin, args.claude_bin, python_bin, config)
+    sidebar_cmd = sidebar_shell_command(
+        script, right_pane, args.codex_bin, args.claude_bin, python_bin, provider_text, frozen_config
+    )
     run_tmux(["split-window", "-h", "-b", "-l", width, "-t", right_pane, sidebar_cmd])
     run_tmux(["select-pane", "-t", right_pane])
     if args.no_attach:
@@ -901,7 +1008,7 @@ def sidebar_line(session: Session, width: int, selected: bool) -> str:
     custom = "★ " if session.custom_title else ""
     age = format_time(session.modified)[5:16]
     cwd_text = short_cwd(session.cwd, 18)
-    prefix = f"{marker} {age} {cwd_text:<18} "
+    prefix = f"{marker} {provider_label(session.provider):<2} {age} {cwd_text:<18} "
     if width >= 34:
         title_width = max(8, width - len(prefix))
         return f"{prefix}{custom}{shorten(session.title, max(1, title_width - len(custom)))}"
@@ -942,19 +1049,20 @@ def send_resume_to_pane(target_pane: str, session: Session, agent_bin: str, kill
 
 
 def sidebar_curses(stdscr: curses.window, args: argparse.Namespace) -> int:
-    config = build_config(args)
-    agent_bin = agent_bin_for(args, config.provider)
+    configs = build_configs(args)
+    providers = [config.provider for config in configs]
+    agent_bins = {provider: agent_bin_for(args, provider) for provider in providers}
     curses.curs_set(0)
     stdscr.nodelay(False)
     selected = 0
     query = ""
-    help_text = f"{provider_title(config.provider)} ↑↓/j/k move Enter resume r rename d trash / search c clear R refresh q quit"
+    help_text = f"{providers_title(providers)} ↑↓/j/k move Enter resume r rename d trash / search c clear R refresh q quit"
     message = help_text
     sessions: list[Session] = []
     needs_reload = True
     while True:
         if needs_reload:
-            sessions = load_sessions(config, query, limit=args.limit)
+            sessions = load_sessions_from_configs(configs, query, limit=args.limit)
             needs_reload = False
             message = f"loaded {len(sessions)} sessions" if sessions else "no sessions found"
             if sessions:
@@ -964,7 +1072,7 @@ def sidebar_curses(stdscr: curses.window, args: argparse.Namespace) -> int:
         height, width = stdscr.getmaxyx()
         draw_width = max(1, width - 1)
         stdscr.erase()
-        header = f" {provider_title(config.provider)} Sessions " + (f"/{query}" if query else "")
+        header = f" {providers_title(providers)} Sessions " + (f"/{query}" if query else "")
         stdscr.addnstr(0, 0, header.ljust(draw_width), draw_width, curses.A_REVERSE)
         help_row = 1
         list_start = 2
@@ -980,7 +1088,7 @@ def sidebar_curses(stdscr: curses.window, args: argparse.Namespace) -> int:
         footer_row = height - 2
         if sessions:
             current = sessions[selected]
-            detail = f"{current.id[:12]} {short_cwd(current.cwd, max(10, width - 15))}"
+            detail = f"{current.provider}:{current.id[:12]} {short_cwd(current.cwd, max(10, width - 24))}"
         else:
             detail = "no sessions"
         stdscr.addnstr(footer_row, 0, detail.ljust(draw_width), draw_width, curses.A_DIM)
@@ -1011,21 +1119,23 @@ def sidebar_curses(stdscr: curses.window, args: argparse.Namespace) -> int:
             needs_reload = True
         elif key in (10, 13):
             if sessions:
-                send_resume_to_pane(args.target_pane, sessions[selected], agent_bin, args.kill_running)
+                current = sessions[selected]
+                send_resume_to_pane(args.target_pane, current, agent_bins[current.provider], args.kill_running)
                 message = f"sent resume for {sessions[selected].id[:12]}"
         elif key == ord("r"):
             if sessions:
                 current = sessions[selected]
                 value = prompt(stdscr, height - 1, "rename", current.custom_title or current.title)
                 if value is not None:
+                    config = config_for_provider(configs, current.provider)
                     names = load_json_object(config.names_file)
                     value = value.strip()
-                    key = session_name_key(config.provider, current.id)
+                    key = session_name_key(current.provider, current.id)
                     if value:
                         names[key] = {
                             "title": value,
                             "updated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
-                            "provider": config.provider,
+                            "provider": current.provider,
                             "session_path": str(current.path),
                         }
                         message = f"renamed {current.id[:12]}"
@@ -1039,6 +1149,7 @@ def sidebar_curses(stdscr: curses.window, args: argparse.Namespace) -> int:
                 current = sessions[selected]
                 value = prompt(stdscr, height - 1, "type DELETE to trash", "")
                 if value == "DELETE":
+                    config = config_for_provider(configs, current.provider)
                     move_to_trash(config, current)
                     message = f"trashed {current.id[:12]}"
                     selected = max(0, selected - 1)
@@ -1049,8 +1160,8 @@ def sidebar_curses(stdscr: curses.window, args: argparse.Namespace) -> int:
 
 def command_sidebar(args: argparse.Namespace) -> int:
     if args.render_once:
-        config = build_config(args)
-        print_sessions(load_sessions(config, limit=args.limit))
+        configs = build_configs(args)
+        print_sessions(load_sessions_from_configs(configs, limit=args.limit))
         return 0
     if not args.target_pane:
         raise SystemExit("sidebar requires --target-pane")
@@ -1060,9 +1171,8 @@ def command_sidebar(args: argparse.Namespace) -> int:
 def add_global_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--provider",
-        choices=("codex", "claude"),
         default=argparse.SUPPRESS,
-        help="session provider; default: AGENTIC_SESSION_PROVIDER or codex",
+        help="comma-separated session providers: codex, claude, or codex,claude; default: both",
     )
     parser.add_argument(
         "--agent-home",

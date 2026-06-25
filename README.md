@@ -89,9 +89,11 @@ ags list -n 10
 ags tmux
 ```
 
-Claude Code sessions use the same commands with `--provider claude`:
+By default, `agentic-sessions` uses `--provider codex,claude` and merges sessions
+from both tools by modified time. Filter to one provider when needed:
 
 ```bash
+ags --provider codex list -n 10
 ags --provider claude doctor
 ags --provider claude list -n 10
 ags --provider claude tmux
@@ -229,11 +231,17 @@ List sessions:
 
 ```bash
 agentic-sessions list -n 20
+agentic-sessions --provider codex,claude list -n 20
+agentic-sessions --provider codex list -n 20
+agentic-sessions --provider claude list -n 20
 agentic-sessions list -q rv_github
 agentic-sessions list --long
 agentic-sessions list --json
-agentic-sessions --provider claude list -n 20
 ```
+
+The default and explicit `--provider codex,claude` modes interleave providers by
+modified time. If the newest rows are all from one provider, increase `-n` or filter
+with `--provider codex` / `--provider claude`.
 
 Rename a session using sidecar metadata:
 
@@ -353,7 +361,7 @@ agentic-sessions --provider claude tmux --claude-bin /path/to/claude
 
 Environment variables:
 
-- `AGENTIC_SESSION_PROVIDER`: default provider, `codex` or `claude`
+- `AGENTIC_SESSION_PROVIDER`: default provider list, for example `codex`, `claude`, or `codex,claude`; default is `codex,claude`
 - `CODEX_SESSION_PROVIDER`: legacy default-provider variable, still honored
 - `CODEX_BIN`: explicit Codex binary path
 - `CODEX_HOME`: agent home containing `sessions/`, or CLI home containing `agent/sessions/`
