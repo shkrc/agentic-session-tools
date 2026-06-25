@@ -11,7 +11,6 @@ from __future__ import annotations
 import argparse
 import curses
 import datetime as dt
-import glob
 import json
 import os
 import re
@@ -21,6 +20,7 @@ import sys
 import textwrap
 import time
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Iterable, Sequence
 
@@ -55,11 +55,14 @@ class Session:
     first_prompt: str
     last_prompt: str
     custom_title: str = ""
+    native_title: str = ""
 
     @property
     def title(self) -> str:
         if self.custom_title:
             return self.custom_title
+        if self.native_title:
+            return self.native_title
         if self.first_prompt:
             return self.first_prompt
         if self.cwd:
@@ -116,6 +119,10 @@ def provider_label(provider: str) -> str:
     return "Cl" if provider == "claude" else "Cx"
 
 
+def sidebar_provider_label(provider: str, width: int) -> str:
+    return provider_title(provider) if width >= 48 else provider_label(provider)
+
+
 def session_name_key(provider: str, session_id: str) -> str:
     return session_id if provider == "codex" else f"{provider}:{session_id}"
 
@@ -125,6 +132,44 @@ def custom_title_for(names: dict, provider: str, session_id: str) -> str:
     if not custom and provider == "codex":
         custom = names.get(session_id, {})
     return str(custom.get("title", "")) if isinstance(custom, dict) else ""
+
+
+NATIVE_TITLES_KEY = "__native_titles__"
+
+
+def native_title_for(names: dict, session_id: str) -> str:
+    native_titles = names.get(NATIVE_TITLES_KEY, {})
+    if not isinstance(native_titles, dict):
+        return ""
+    return str(native_titles.get(session_id, ""))
+
+
+def load_codex_native_titles(agent_home: Path) -> dict[str, str]:
+    titles: dict[str, str] = {}
+    index_path = agent_home / "session_index.jsonl"
+    try:
+        with index_path.open(errors="replace") as handle:
+            for raw in handle:
+                try:
+                    record = json.loads(raw)
+                except Exception:
+                    continue
+                session_id = str(record.get("id") or "").lower()
+                title = str(record.get("thread_name") or "").strip()
+                if session_id and title:
+                    titles[session_id] = title
+    except OSError:
+        pass
+    return titles
+
+
+def load_title_metadata(config: Config) -> dict:
+    names = load_json_object(config.names_file)
+    native_titles = load_codex_native_titles(config.agent_home) if config.provider == "codex" else {}
+    if native_titles:
+        names = dict(names)
+        names[NATIVE_TITLES_KEY] = native_titles
+    return names
 
 
 def parse_env_value(value: str) -> str:
@@ -347,6 +392,7 @@ def parse_codex_session(
         return None
 
     custom_title = custom_title_for(names, "codex", session_id)
+    native_title = native_title_for(names, session_id)
     try:
         modified = path.stat().st_mtime
     except OSError:
@@ -364,6 +410,7 @@ def parse_codex_session(
         first_prompt=first_prompt,
         last_prompt=last_prompt,
         custom_title=str(custom_title),
+        native_title=str(native_title),
     )
 
 
@@ -378,6 +425,7 @@ def parse_claude_session(
     cli_version = ""
     model_provider = ""
     entrypoint = ""
+    native_title = ""
     match = UUID_RE.search(path.name)
     if match:
         session_id = match.group(0).lower()
@@ -401,6 +449,15 @@ def parse_claude_session(
                     cli_version = str(record.get("version"))
                 if not entrypoint and record.get("entrypoint"):
                     entrypoint = str(record.get("entrypoint"))
+                if not native_title:
+                    native_title = str(
+                        record.get("name")
+                        or record.get("displayName")
+                        or record.get("sessionName")
+                        or record.get("title")
+                        or record.get("slug")
+                        or ""
+                    ).strip()
 
                 message = record.get("message")
                 if isinstance(message, dict) and not model_provider and message.get("model"):
@@ -419,7 +476,7 @@ def parse_claude_session(
                     first_prompt = preview
                 if preview:
                     last_prompt = preview
-                if first_prompt and not scan_all_prompts:
+                if first_prompt and not scan_all_prompts and (native_title or line_number >= 40):
                     break
                 if fast_sidebar and session_id and (line_number >= 200 or total_bytes >= 131072):
                     break
@@ -430,6 +487,8 @@ def parse_claude_session(
         return None
 
     custom_title = custom_title_for(names, "claude", session_id)
+    if not native_title:
+        native_title = native_title_for(names, session_id)
     try:
         modified = path.stat().st_mtime
     except OSError:
@@ -447,6 +506,7 @@ def parse_claude_session(
         first_prompt=first_prompt,
         last_prompt=last_prompt,
         custom_title=str(custom_title),
+        native_title=str(native_title),
     )
 
 
@@ -501,12 +561,28 @@ def claude_session_summary_from_path(path: Path) -> dict:
                     summary["cli_version"] = str(record.get("version"))
                 if not summary.get("source") and record.get("entrypoint"):
                     summary["source"] = str(record.get("entrypoint"))
+                if not summary.get("native_title"):
+                    native_title = str(
+                        record.get("name")
+                        or record.get("displayName")
+                        or record.get("sessionName")
+                        or record.get("title")
+                        or record.get("slug")
+                        or ""
+                    ).strip()
+                    if native_title:
+                        summary["native_title"] = native_title
                 if record.get("isSidechain") is True:
                     summary["sidechain"] = True
                 message = record.get("message")
                 if isinstance(message, dict) and not summary.get("model_provider") and message.get("model"):
                     summary["model_provider"] = str(message.get("model"))
-                if summary.get("source") and summary.get("cwd") and summary.get("timestamp"):
+                if (
+                    summary.get("source")
+                    and summary.get("cwd")
+                    and summary.get("timestamp")
+                    and summary.get("native_title")
+                ):
                     break
     except OSError:
         pass
@@ -538,7 +614,7 @@ def load_sessions(
     fast_sidebar: bool = False,
     include_generated: bool = False,
 ) -> list[Session]:
-    names = load_json_object(config.names_file)
+    names = load_title_metadata(config)
     files = session_files(config)
     sessions: list[Session] = []
     seen_ids: set[str] = set()
@@ -588,10 +664,35 @@ def load_sessions_from_configs(
 
 
 def session_files(config: Config) -> list[Path]:
-    pattern = "*.jsonl" if config.provider == "claude" else "rollout-*.jsonl"
-    files = [Path(p) for p in glob.glob(str(config.sessions_root / "**" / pattern), recursive=True)]
-    files.sort(key=lambda path: path.stat().st_mtime if path.exists() else 0, reverse=True)
-    return files
+    infos = session_file_infos(config)
+    infos.sort(key=lambda item: item[0], reverse=True)
+    return [path for _, path in infos]
+
+
+def is_session_file(config: Config, name: str) -> bool:
+    if not name.endswith(".jsonl"):
+        return False
+    return True if config.provider == "claude" else name.startswith("rollout-")
+
+
+def session_file_infos(config: Config) -> list[tuple[float, Path]]:
+    infos: list[tuple[float, Path]] = []
+    stack = [config.sessions_root]
+    while stack:
+        directory = stack.pop()
+        try:
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(Path(entry.path))
+                        elif entry.is_file(follow_symlinks=False) and is_session_file(config, entry.name):
+                            infos.append((entry.stat(follow_symlinks=False).st_mtime, Path(entry.path)))
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+    return infos
 
 
 def session_id_from_path(path: Path) -> str:
@@ -627,11 +728,12 @@ def light_session_from_path(config: Config, path: Path, names: dict) -> Session 
         first_prompt="",
         last_prompt="",
         custom_title=custom_title_for(names, config.provider, session_id),
+        native_title=str(meta.get("native_title") or native_title_for(names, session_id)),
     )
 
 
 def load_session_index(config: Config, query: str = "", limit: int = 0, include_generated: bool = False) -> list[Session]:
-    names = load_json_object(config.names_file)
+    names = load_title_metadata(config)
     sessions: list[Session] = []
     for path in session_files(config):
         if not include_session_path(config, path, include_generated=include_generated):
@@ -659,6 +761,56 @@ def load_session_index_from_configs(
     return sessions
 
 
+class SidebarIndexLoader:
+    def __init__(self, configs: Sequence[Config], query: str = "", include_generated: bool = False):
+        self.query = query.lower()
+        self.include_generated = include_generated
+        self.names_by_provider = {config.provider: load_title_metadata(config) for config in configs}
+        self.pending: list[tuple[float, Config, Path]] = []
+        self.index = 0
+        self.done = False
+        self.scanned = 0
+        self.seen: set[str] = set()
+        for config in configs:
+            for modified, path in session_file_infos(config):
+                self.pending.append((modified, config, path))
+        self.pending.sort(key=lambda row: row[0], reverse=True)
+
+    def load_more(self, existing_count: int, limit: int = 0, path_budget: int = 200) -> list[Session]:
+        if self.done:
+            return []
+        added: list[Session] = []
+        checked = 0
+        while self.index < len(self.pending) and checked < path_budget:
+            if limit and existing_count + len(added) >= limit:
+                self.done = True
+                break
+            _, config, path = self.pending[self.index]
+            self.index += 1
+            checked += 1
+            self.scanned += 1
+            if not include_session_path(config, path, include_generated=self.include_generated):
+                continue
+            session = light_session_from_path(config, path, self.names_by_provider.get(config.provider, {}))
+            if not session:
+                continue
+            key = session_name_key(session.provider, session.id)
+            if key in self.seen:
+                continue
+            self.seen.add(key)
+            if self.query and self.query not in session_haystack(session):
+                continue
+            added.append(session)
+        if self.index >= len(self.pending):
+            self.done = True
+        return added
+
+    def status(self, count: int) -> str:
+        if self.done:
+            return f"loaded {count} sessions"
+        return f"loaded {count} sessions; scanning {self.scanned}/{len(self.pending)} files"
+
+
 def looks_like_id_fragment(selector: str) -> bool:
     needle = selector.strip().lower()
     return len(needle) >= 4 and all(char in "0123456789abcdef-" for char in needle)
@@ -667,7 +819,7 @@ def looks_like_id_fragment(selector: str) -> bool:
 def resolve_session_selector(
     config: Config, selector: str, match_limit: int = 200, include_generated: bool = False
 ) -> Session:
-    names = load_json_object(config.names_file)
+    names = load_title_metadata(config)
     needle = selector.strip().lower()
     if looks_like_id_fragment(needle):
         matches = [path for path in session_files(config) if needle in path.name.lower()]
@@ -691,7 +843,7 @@ def resolve_session_selector_any(
     sessions: list[Session] = []
     needle = selector.strip().lower()
     for config in configs:
-        names = load_json_object(config.names_file)
+        names = load_title_metadata(config)
         if looks_like_id_fragment(needle):
             for path in session_files(config):
                 if needle not in path.name.lower():
@@ -719,13 +871,56 @@ def format_time(epoch: float) -> str:
     return dt.datetime.fromtimestamp(epoch).strftime("%Y-%m-%d %H:%M")
 
 
-def short_cwd(cwd: str, width: int = 24) -> str:
+@lru_cache(maxsize=1)
+def home_path_aliases() -> tuple[tuple[Path, str], ...]:
+    home = Path.home()
+    aliases: list[tuple[Path, str]] = []
+    try:
+        aliases.append((home.resolve(), "~"))
+    except OSError:
+        aliases.append((home, "~"))
+    try:
+        children = list(home.iterdir())
+    except OSError:
+        children = []
+    for child in children:
+        try:
+            if child.is_symlink() and child.is_dir():
+                aliases.append((child.resolve(), "~/" + child.name))
+        except OSError:
+            continue
+    aliases.sort(key=lambda item: len(str(item[0])), reverse=True)
+    return tuple(aliases)
+
+
+def display_cwd(cwd: str) -> str:
     if not cwd:
         return "-"
-    path = Path(cwd)
-    text = f"…/{path.parent.name}/{path.name}" if path.parent.name else path.name
-    if len(text) > width:
-        return "…" + text[-(width - 1) :]
+    path = Path(cwd).expanduser()
+    try:
+        resolved = path.resolve()
+    except OSError:
+        resolved = path
+    for root, label in home_path_aliases():
+        try:
+            relative = resolved.relative_to(root)
+        except ValueError:
+            continue
+        suffix = str(relative)
+        return label if not suffix or suffix == "." else label + "/" + suffix
+    return str(path)
+
+
+def short_cwd(cwd: str, width: int = 24) -> str:
+    text = display_cwd(cwd)
+    try:
+        display_width = max(1, width)
+    except TypeError:
+        display_width = 24
+    if len(text) > display_width:
+        if text.startswith("~/") and display_width >= 6:
+            return "~/…" + text[-(display_width - 3) :]
+        return "…" + text[-(display_width - 1) :]
     return text
 
 
@@ -746,6 +941,7 @@ def print_sessions(sessions: Sequence[Session], long: bool = False, json_output:
                     "id": s.id,
                     "title": s.title,
                     "custom_title": s.custom_title,
+                    "native_title": s.native_title,
                     "timestamp": s.timestamp,
                     "modified": s.modified,
                     "modified_text": format_time(s.modified),
@@ -1082,7 +1278,7 @@ cat <<AGENTIC_SESSIONS_HELP
 Sidebar keys:
   j/k or arrows : move
   Enter         : resume here
-  r             : rename
+  r             : native rename active session
   d             : trash; confirm DELETE
   /             : search
   c             : clear search
@@ -1105,7 +1301,7 @@ def print_right_pane_help(providers: Sequence[str]) -> None:
         "Sidebar keys:\n"
         "  j/k or arrows : move\n"
         "  Enter         : resume here\n"
-        "  r             : rename\n"
+        "  r             : native rename active session\n"
         "  d             : trash; confirm DELETE\n"
         "  /             : search\n"
         "  c             : clear search\n"
@@ -1231,6 +1427,81 @@ def sidebar_line(session: Session, width: int, selected: bool) -> str:
     return f"{marker} {age} {custom}{shorten(session.title, title_width)}"
 
 
+def sidebar_card_height(width: int) -> int:
+    return 6 if width >= 34 else 1
+
+
+def sidebar_card_stride(width: int, height: int) -> int:
+    card_height = sidebar_card_height(width)
+    if card_height == 1:
+        return 1
+    available = max(0, height - 5)
+    return card_height + 1 if available >= (card_height * 2) + 1 else card_height
+
+
+def fit_cell(text: str, width: int) -> str:
+    return shorten(text, max(1, width)).ljust(max(0, width))
+
+
+def box_border(left: str, right: str, label: str, width: int) -> str:
+    inner_width = max(0, width - 2)
+    label = shorten(label, inner_width)
+    return left + label + ("─" * max(0, inner_width - len(label))) + right
+
+
+def box_content(text: str, width: int) -> str:
+    inner_width = max(0, width - 4)
+    return "│ " + fit_cell(text, inner_width) + " │"
+
+
+def prompt_context_lines(session: Session, width: int) -> list[str]:
+    text = normalize_ws(session.first_prompt or session.last_prompt or "")
+    if not text:
+        return ["context: -", "          "]
+    inner_width = max(1, width - 4)
+    first_prefix = "context: "
+    next_prefix = "         "
+    chunks = textwrap.wrap(
+        text,
+        width=max(8, inner_width - len(first_prefix)),
+        break_long_words=False,
+        drop_whitespace=True,
+    )
+    first = chunks[0] if chunks else ""
+    rest = " ".join(chunks[1:])
+    continuation = textwrap.wrap(
+        rest,
+        width=max(8, inner_width - len(next_prefix)),
+        break_long_words=False,
+        drop_whitespace=True,
+    )
+    return [first_prefix + first, next_prefix + (continuation[0] if continuation else "")]
+
+
+def sidebar_card_lines(session: Session, width: int, selected: bool) -> list[str]:
+    if sidebar_card_height(width) == 1:
+        return [sidebar_line(session, width, selected)]
+    marker = "›" if selected else " "
+    age = format_time(session.modified)[5:16]
+    if session.custom_title:
+        name = "name: ★ " + session.custom_title
+    elif session.native_title:
+        name = "name: " + session.native_title
+    else:
+        name = "name: -"
+    context = prompt_context_lines(session, width)
+    cwd_text = short_cwd(session.cwd, max(10, width - 10))
+    provider = sidebar_provider_label(session.provider, width)
+    return [
+        box_border("╭", "╮", f"─ {marker} {provider} {age} ", width),
+        box_content("cwd: " + cwd_text, width),
+        box_content(name, width),
+        box_content(context[0], width),
+        box_content(context[1], width),
+        box_border("╰", "╯", f"─ {session.id[:12]} ", width),
+    ]
+
+
 def safe_color_pair(pair_number: int, fallback: int = curses.A_NORMAL) -> int:
     try:
         return curses.color_pair(pair_number)
@@ -1320,34 +1591,121 @@ def send_resume_to_pane(target_pane: str, session: Session, agent_bin: str, kill
     subprocess.run(["tmux", "select-pane", "-t", target_pane], check=False)
 
 
+def active_session_key(session: Session) -> str:
+    return session_name_key(session.provider, session.id)
+
+
+def sanitize_native_name(name: str) -> str:
+    return normalize_ws("".join(char for char in name if char.isprintable()), limit=120)
+
+
+def capture_pane_tail(target_pane: str, lines: int = 40) -> str:
+    try:
+        result = subprocess.run(
+            ["tmux", "capture-pane", "-p", "-J", "-t", target_pane, "-S", f"-{lines}"],
+            text=True,
+            check=False,
+            capture_output=True,
+        )
+    except Exception:
+        return ""
+    return result.stdout if result.returncode == 0 else ""
+
+
+def pane_current_command(target_pane: str) -> str:
+    try:
+        result = subprocess.run(
+            ["tmux", "display-message", "-p", "-t", target_pane, "#{pane_current_command}"],
+            text=True,
+            check=False,
+            capture_output=True,
+        )
+    except Exception:
+        return ""
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def pane_command_matches_provider(target_pane: str, session: Session, agent_bin: str) -> bool:
+    current = Path(pane_current_command(target_pane)).name.lower()
+    configured = Path(agent_bin).name.lower()
+    if not current:
+        return False
+    if configured and current == configured:
+        return True
+    if session.provider == "claude":
+        return current == "claude"
+    return current in {"codex", "qgenie"}
+
+
+def pane_looks_ready_for_slash_command(target_pane: str, session: Session, agent_bin: str) -> bool:
+    if not pane_command_matches_provider(target_pane, session, agent_bin):
+        return False
+    tail = [line.rstrip() for line in capture_pane_tail(target_pane, lines=30).splitlines()]
+    visible = [line for line in tail if line.strip()]
+    for line in visible[-8:]:
+        stripped = line.strip()
+        if stripped in {"❯", ">", "›"}:
+            return True
+        if stripped.startswith(("❯", "›")) and len(stripped) <= 8:
+            return True
+    return False
+
+
+def send_native_rename_to_pane(target_pane: str, title: str) -> None:
+    command = "/rename " + title
+    subprocess.run(["tmux", "send-keys", "-t", target_pane, "-l", command], check=False)
+    subprocess.run(["tmux", "send-keys", "-t", target_pane, "Enter"], check=False)
+    subprocess.run(["tmux", "select-pane", "-t", target_pane], check=False)
+
+
 def sidebar_curses(stdscr: curses.window, args: argparse.Namespace) -> int:
     configs = build_configs(args)
     providers = [config.provider for config in configs]
     agent_bins = {provider: agent_bin_for(args, provider) for provider in providers}
     curses.curs_set(0)
     attrs = sidebar_attrs()
-    stdscr.nodelay(False)
+    stdscr.timeout(120)
     selected = 0
     query = ""
-    help_text = f"{providers_title(providers)} ↑↓/j/k move Enter resume r rename d trash / search c clear R refresh q quit"
+    help_text = f"{providers_title(providers)} ↑↓/j/k move Enter resume r native-rename d trash / search c clear R refresh q quit"
     message = help_text
+    active_key = ""
     sessions: list[Session] = []
     names_by_provider: dict[str, dict] = {}
     enriched_paths: set[str] = set()
+    loader: SidebarIndexLoader | None = None
     needs_reload = True
     while True:
         if needs_reload:
-            sessions = load_session_index_from_configs(
-                configs, query, limit=args.limit, include_generated=include_generated_sessions(args)
-            )
-            names_by_provider = {config.provider: load_json_object(config.names_file) for config in configs}
+            loader = SidebarIndexLoader(configs, query, include_generated=include_generated_sessions(args))
+            sessions = loader.load_more(0, limit=args.limit, path_budget=250)
+            names_by_provider = loader.names_by_provider
             enriched_paths = set()
             needs_reload = False
-            message = f"loaded {len(sessions)} sessions" if sessions else "no sessions found"
-            if sessions:
-                selected = min(selected, len(sessions) - 1)
-            else:
-                selected = 0
+            message = loader.status(len(sessions)) if sessions or not loader.done else "no sessions found"
+            selected = min(selected, len(sessions) - 1) if sessions else 0
+        elif loader and not loader.done:
+            added = loader.load_more(len(sessions), limit=args.limit, path_budget=80)
+            if added:
+                selected_key = (
+                    session_name_key(sessions[selected].provider, sessions[selected].id) if sessions else ""
+                )
+                sessions.extend(added)
+                sessions.sort(key=lambda session: session.modified, reverse=True)
+                if selected_key:
+                    selected = next(
+                        (
+                            idx
+                            for idx, session in enumerate(sessions)
+                            if session_name_key(session.provider, session.id) == selected_key
+                        ),
+                        min(selected, len(sessions) - 1),
+                    )
+                else:
+                    selected = 0
+            message = loader.status(len(sessions))
+            if loader.done and not sessions:
+                message = "no sessions found"
         height, width = stdscr.getmaxyx()
         draw_width = max(1, width - 1)
         stdscr.erase()
@@ -1355,9 +1713,12 @@ def sidebar_curses(stdscr: curses.window, args: argparse.Namespace) -> int:
         stdscr.addnstr(0, 0, header.ljust(draw_width), draw_width, attrs["header"])
         help_row = 1
         list_start = 2
-        max_rows = max(0, height - 5)
-        start = max(0, selected - max_rows + 1)
-        visible = sessions[start : start + max_rows]
+        card_height = sidebar_card_height(draw_width)
+        card_stride = sidebar_card_stride(draw_width, height)
+        max_cards = max(0, (height - 5) // card_stride)
+        page_size = max(1, max_cards)
+        start = max(0, selected - page_size + 1)
+        visible = sessions[start : start + page_size]
         stdscr.addnstr(help_row, 0, shorten(help_text, draw_width).ljust(draw_width), draw_width, attrs["help"])
         for offset, session in enumerate(visible):
             absolute_index = start + offset
@@ -1374,10 +1735,11 @@ def sidebar_curses(stdscr: curses.window, args: argparse.Namespace) -> int:
                     session = parsed
                     sessions[absolute_index] = parsed
                 enriched_paths.add(path_key)
-            row = list_start + offset
+            row = list_start + offset * card_stride
             is_selected = absolute_index == selected
             attr = attrs["selected"] if is_selected else attrs["row"]
-            stdscr.addnstr(row, 0, sidebar_line(session, draw_width, is_selected).ljust(draw_width), draw_width, attr)
+            for line_offset, line in enumerate(sidebar_card_lines(session, draw_width, is_selected)):
+                stdscr.addnstr(row + line_offset, 0, line.ljust(draw_width), draw_width, attr)
         footer_row = height - 2
         if sessions:
             current = sessions[selected]
@@ -1391,6 +1753,8 @@ def sidebar_curses(stdscr: curses.window, args: argparse.Namespace) -> int:
         stdscr.addnstr(height - 1, 0, shorten(message, draw_width).ljust(draw_width), draw_width, attrs["message"])
         stdscr.refresh()
         key = stdscr.getch()
+        if key == -1:
+            continue
         if key in (ord("q"), 27):
             return 0
         if key in (curses.KEY_DOWN, ord("j")):
@@ -1398,9 +1762,9 @@ def sidebar_curses(stdscr: curses.window, args: argparse.Namespace) -> int:
         elif key in (curses.KEY_UP, ord("k")):
             selected = max(0, selected - 1)
         elif key in (curses.KEY_NPAGE, ord(" ")):
-            selected = min(selected + max_rows, max(0, len(sessions) - 1))
+            selected = min(selected + page_size, max(0, len(sessions) - 1))
         elif key == curses.KEY_PPAGE:
-            selected = max(0, selected - max_rows)
+            selected = max(0, selected - page_size)
         elif key in (ord("/"),):
             value = prompt(stdscr, height - 1, "search", query)
             if value is not None:
@@ -1417,29 +1781,27 @@ def sidebar_curses(stdscr: curses.window, args: argparse.Namespace) -> int:
             if sessions:
                 current = sessions[selected]
                 send_resume_to_pane(args.target_pane, current, agent_bins[current.provider], args.kill_running)
+                active_key = active_session_key(current)
                 message = f"sent resume for {sessions[selected].id[:12]}"
         elif key == ord("r"):
             if sessions:
                 current = sessions[selected]
-                value = prompt(stdscr, height - 1, "rename", current.custom_title or current.title)
-                if value is not None:
-                    config = config_for_provider(configs, current.provider)
-                    names = load_json_object(config.names_file)
-                    value = value.strip()
-                    key = session_name_key(current.provider, current.id)
-                    if value:
-                        names[key] = {
-                            "title": value,
-                            "updated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
-                            "provider": current.provider,
-                            "session_path": str(current.path),
-                        }
-                        message = f"renamed {current.id[:12]}"
-                    else:
-                        names.pop(key, None)
-                        message = f"cleared title {current.id[:12]}"
-                    atomic_write_json(config.names_file, names)
-                    needs_reload = True
+                if active_session_key(current) != active_key:
+                    message = "resume this session first to native rename"
+                elif not pane_looks_ready_for_slash_command(args.target_pane, current, agent_bins[current.provider]):
+                    message = "wait, session busy"
+                else:
+                    value = prompt(stdscr, height - 1, "native name", current.native_title or current.custom_title)
+                    if value is not None:
+                        value = sanitize_native_name(value)
+                        if not value:
+                            message = "native rename needs a non-empty name"
+                        else:
+                            send_native_rename_to_pane(args.target_pane, value)
+                            current.native_title = value
+                            message = f"sent native rename for {current.id[:12]}"
+                            time.sleep(0.4)
+                            needs_reload = True
         elif key == ord("d"):
             if sessions:
                 current = sessions[selected]

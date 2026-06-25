@@ -6,7 +6,7 @@ Codex and Claude Code sessions without modifying either tool's session files.
 It provides:
 
 - `agentic-sessions list` — list recent Codex or Claude sessions with time, CWD, and prompt preview
-- `agentic-sessions rename` — add human-friendly titles using sidecar metadata
+- `agentic-sessions rename` — add fallback human-friendly titles when no native provider title exists
 - `agentic-sessions delete` — move session JSONL files to a recoverable trash folder
 - `agentic-sessions resume` — resume by UUID, UUID prefix, or unique text fragment
 - `agentic-sessions tmux` — tmux two-pane workspace with a session sidebar
@@ -247,7 +247,7 @@ Default views show top-level interactive sessions only so generated child,
 background, and SDK probe sessions do not flood the list; use `--all` when you
 need to inspect raw session files.
 
-Rename a session using sidecar metadata:
+Rename a session with fallback sidecar metadata:
 
 ```bash
 agentic-sessions rename 019eda11 "RPMI telemetry docs"
@@ -285,7 +285,7 @@ Outside tmux, it creates a new tmux session with one window and two panes.
 
 - `j` / `k` or arrow keys: move selection
 - `Enter`: suspend the current right-pane agent with `Ctrl-Z`, resume selected session, and focus that pane
-- `r`: rename selected session
+- `r`: native rename the selected session after it has been resumed in the right pane
 - `d`: trash selected session after typing `DELETE`
 - `/`: search/filter sessions
 - `c`: clear search filter
@@ -295,8 +295,17 @@ Outside tmux, it creates a new tmux session with one window and two panes.
 - detected tmux prefix + `Right`: focus the agent pane from the sidebar pane
 - mouse click: focus the clicked pane when tmux mouse mode is enabled
 
-The sidebar caches the session list for fast arrow-key navigation. It reloads only on
-search, clear, rename, delete, or manual refresh.
+The sidebar shows sessions as compact boxed cards with provider/time, cwd,
+provider/native or custom `name`, two lines of prompt `context`, and short id.
+Native names are read when available, for example Codex/QGenie `thread_name`
+from `session_index.jsonl` and Claude `slug` from project JSONL. `r` sends the
+provider-native `/rename` command only for the active session already resumed in
+the right pane; if another row is selected, resume it first. If the pane is still
+busy, the sidebar asks you to wait. Prompt context remains separate. The
+sidebar first sorts candidate session files by last-used file mtime, then parses
+them in small chunks so the pane can paint quickly and keep refreshing
+newest-first. It caches loaded rows for fast arrow-key navigation and reloads
+only on search, clear, rename, delete, or manual refresh.
 The runtime help prints your configured tmux prefix directly, for example
 `C-b + Left` or `C-a + Left`.
 When the terminal supports colors, the sidebar uses a muted Claude-style palette
@@ -356,8 +365,14 @@ Use the displayed tmux prefix + `Left` to return to the sidebar pane.
 ## Safety Model
 
 The tool does not edit Codex or Claude session JSONL files for normal metadata operations.
+It reads provider-owned native display names when they are present, but does not
+write provider indexes directly.
 
-- Custom names are stored in sidecar metadata:
+- Native names are read from provider metadata where available:
+  - Codex/QGenie: `session_index.jsonl` `thread_name` entries
+  - Claude Code: project JSONL `slug` entries
+- Sidebar rename uses provider-native `/rename` for the active right-pane session.
+- The `agentic-sessions rename` CLI command still stores fallback custom names in sidecar metadata:
   - Codex: `~/.codex/session-tools/session-names.json`
   - Claude: `~/.claude/session-tools/session-names.json`
 - Delete/trash moves rollout files into:
