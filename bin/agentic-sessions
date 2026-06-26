@@ -1853,7 +1853,7 @@ def sanitize_native_name(name: str) -> str:
 
 
 def default_native_rename_title(session: Session) -> str:
-    title = session.native_title or session.custom_title or session.title
+    title = session.native_title or session.custom_title
     return sanitize_native_name(title)
 
 
@@ -1910,11 +1910,12 @@ def pane_looks_ready_for_slash_command(target_pane: str, session: Session, agent
     return False
 
 
-def send_native_rename_to_pane(target_pane: str, title: str) -> None:
-    command = "/rename " + title
+def send_native_rename_to_pane(target_pane: str, title: str, submit: bool = True) -> None:
+    command = "/rename " + title if title else "/rename "
     subprocess.run(["tmux", "send-keys", "-t", target_pane, "C-u"], check=False)
     subprocess.run(["tmux", "send-keys", "-t", target_pane, "-l", command], check=False)
-    subprocess.run(["tmux", "send-keys", "-t", target_pane, "Enter"], check=False)
+    if submit:
+        subprocess.run(["tmux", "send-keys", "-t", target_pane, "Enter"], check=False)
     subprocess.run(["tmux", "select-pane", "-t", target_pane], check=False)
 
 
@@ -2069,12 +2070,13 @@ def sidebar_curses(stdscr: curses.window, args: argparse.Namespace) -> int:
                     message = "wait, session busy"
                 else:
                     default_title = default_native_rename_title(current)
-                    value = prompt(stdscr, height - 1, "native name", default_title)
-                    if value is not None:
-                        value = sanitize_native_name(value) or default_title
-                        if not value:
-                            message = "native rename cancelled"
-                        else:
+                    if not default_title:
+                        send_native_rename_to_pane(args.target_pane, "", submit=False)
+                        message = "type native name in agent pane"
+                    else:
+                        value = prompt(stdscr, height - 1, "native name", default_title)
+                        if value is not None:
+                            value = sanitize_native_name(value) or default_title
                             send_native_rename_to_pane(args.target_pane, value)
                             current.native_title = value
                             message = f"sent native rename for {current.id[:12]}"
