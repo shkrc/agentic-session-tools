@@ -297,6 +297,7 @@ Outside tmux, it creates a new tmux session with one window and two panes.
 - `q`: close the sidebar pane
 - detected tmux prefix + `Left`: focus the sidebar pane from the agent pane
 - detected tmux prefix + `Right`: focus the agent pane from the sidebar pane
+- detected tmux prefix + `b`: reopen the sidebar if it was closed
 - mouse click: focus the clicked pane when tmux mouse mode is enabled
 
 The sidebar shows sessions as compact boxed cards with provider/time, cwd,
@@ -311,7 +312,9 @@ them in small chunks so the pane can paint quickly and keep refreshing
 newest-first. It caches loaded rows for fast arrow-key navigation and reloads
 only on search, clear, rename, delete, or manual refresh.
 The runtime help prints your configured tmux prefix directly, for example
-`C-b + Left` or `C-a + Left`.
+`C-b + Left` or `C-a + Left`. `tmux` mode also stores a window-local
+reopen command and binds prefix + `b`; if you close the sidebar with `q`, press
+prefix + `b` from the same tmux window to bring it back.
 When the terminal supports colors, the sidebar uses a muted Claude-style palette
 for the header, selected row, help, and status lines; monochrome terminals fall
 back to plain reverse/dim text.

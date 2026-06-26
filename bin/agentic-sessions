@@ -1254,6 +1254,87 @@ def run_tmux(args: Sequence[str], dry_run: bool = False) -> subprocess.Completed
     return subprocess.run(command, text=True, check=True, capture_output=True)
 
 
+def split_sidebar_pane(target_pane: str, width: str, sidebar_cmd: str, dry_run: bool = False) -> str:
+    args = ["split-window", "-h", "-b", "-l", width, "-t", target_pane, "-P", "-F", "#{pane_id}", sidebar_cmd]
+    result = run_tmux(args, dry_run)
+    return result.stdout.strip() if result and result.stdout else ""
+
+
+def set_window_option(target_pane: str, name: str, value: str, dry_run: bool = False) -> None:
+    run_tmux(["set-option", "-wq", "-t", target_pane, name, value], dry_run)
+
+
+def remember_sidebar_reopen(target_pane: str, sidebar_pane: str, sidebar_cmd: str, width: str, dry_run: bool = False) -> None:
+    set_window_option(target_pane, "@agentic_sessions_target_pane", target_pane, dry_run)
+    set_window_option(target_pane, "@agentic_sessions_sidebar_pane", sidebar_pane, dry_run)
+    set_window_option(target_pane, "@agentic_sessions_sidebar_width", width, dry_run)
+    set_window_option(target_pane, "@agentic_sessions_sidebar_cmd", sidebar_cmd, dry_run)
+
+
+def tmux_prefix_key_bound(key: str) -> bool:
+    try:
+        result = subprocess.run(
+            ["tmux", "list-keys", "-T", "prefix", key],
+            text=True,
+            check=False,
+            capture_output=True,
+        )
+    except Exception:
+        return True
+    return result.returncode == 0 and bool(result.stdout.strip())
+
+
+def install_sidebar_reopen_key(
+    script_path: str,
+    python_bin: str,
+    provider_text: str,
+    codex_bin: str,
+    claude_bin: str,
+    width: str,
+    dry_run: bool = False,
+) -> None:
+    keys = ("b", "S")
+    fallback_cmd = (
+        "cmd=\"exec "
+        + shell_quote(python_bin)
+        + " "
+        + shell_quote(script_path)
+        + " --provider "
+        + shell_quote(provider_text)
+        + " sidebar --target-pane '$target' --codex-bin "
+        + shell_quote(codex_bin)
+        + " --claude-bin "
+        + shell_quote(claude_bin)
+        + "\"; "
+    )
+    script = (
+        "current=$(tmux display-message -p '##{pane_id}'); "
+        "target=$(tmux show-option -wqv @agentic_sessions_target_pane); "
+        "cmd=$(tmux show-option -wqv @agentic_sessions_sidebar_cmd); "
+        "saved_width=$(tmux show-option -wqv @agentic_sessions_sidebar_width); "
+        "sidebar=$(tmux show-option -wqv @agentic_sessions_sidebar_pane); "
+        "[ -n \"$target\" ] || target=\"$current\"; "
+        "width=\"$saved_width\"; [ -n \"$width\" ] || width="
+        + shell_quote(width)
+        + "; "
+        "if [ -n \"$sidebar\" ] && tmux list-panes -a -F '##{pane_id}' | grep -Fx -- \"$sidebar\" >/dev/null 2>&1; "
+        "then tmux select-pane -t \"$sidebar\"; exit 0; fi; "
+        "if ! tmux list-panes -a -F '##{pane_id}' | grep -Fx -- \"$target\" >/dev/null 2>&1; "
+        "then target=\"$current\"; cmd=; fi; "
+        "if [ -z \"$cmd\" ]; then "
+        + fallback_cmd
+        + "fi; "
+        "new=$(tmux split-window -h -b -l \"$width\" -t \"$target\" -P -F '##{pane_id}' \"$cmd\"); "
+        "tmux set-option -wq @agentic_sessions_target_pane \"$target\"; "
+        "tmux set-option -wq @agentic_sessions_sidebar_width \"$width\"; "
+        "tmux set-option -wq @agentic_sessions_sidebar_cmd \"$cmd\"; "
+        "tmux set-option -wq @agentic_sessions_sidebar_pane \"$new\"; "
+        "tmux select-pane -t \"$target\""
+    )
+    for key in keys:
+        run_tmux(["bind-key", key, "run-shell", script], dry_run)
+
+
 def tmux_prefix_key(default: str = "prefix") -> str:
     try:
         result = subprocess.run(
@@ -1287,6 +1368,7 @@ Sidebar keys:
 Tmux pane keys:
   ${prefix} + Left : focus sidebar pane
   ${prefix} + Right: focus agent pane
+  ${prefix} + b    : reopen sidebar if closed
   mouse click     : focus clicked pane if tmux mouse is on
 
 Select a session from the left pane to start.
@@ -1309,6 +1391,7 @@ def print_right_pane_help(providers: Sequence[str]) -> None:
         "Tmux pane keys:\n"
         f"  {prefix} + Left : focus sidebar pane\n"
         f"  {prefix} + Right: focus agent pane\n"
+        f"  {prefix} + b    : reopen sidebar if closed\n"
         "  mouse click  : focus clicked pane if tmux mouse is on\n\n"
         "Select a session from the left pane to start.\n",
         flush=True,
@@ -1384,10 +1467,14 @@ def command_tmux(args: argparse.Namespace) -> int:
         )
         if args.dry_run:
             print(f"# inside tmux: split current window; target right pane is {right_pane}")
-            run_tmux(["split-window", "-h", "-b", "-l", width, "-t", right_pane, sidebar_cmd], True)
+            split_sidebar_pane(right_pane, width, sidebar_cmd, True)
+            remember_sidebar_reopen(right_pane, "", sidebar_cmd, width, True)
+            install_sidebar_reopen_key(script, python_bin, provider_text, args.codex_bin, args.claude_bin, width, True)
             run_tmux(["select-pane", "-t", right_pane], True)
             return 0
-        run_tmux(["split-window", "-h", "-b", "-l", width, "-t", right_pane, sidebar_cmd])
+        sidebar_pane = split_sidebar_pane(right_pane, width, sidebar_cmd)
+        remember_sidebar_reopen(right_pane, sidebar_pane, sidebar_cmd, width)
+        install_sidebar_reopen_key(script, python_bin, provider_text, args.codex_bin, args.claude_bin, width)
         run_tmux(["select-pane", "-t", right_pane])
         return 0
 
@@ -1404,7 +1491,9 @@ def command_tmux(args: argparse.Namespace) -> int:
     sidebar_cmd = sidebar_shell_command(
         script, right_pane, args.codex_bin, args.claude_bin, python_bin, provider_text, frozen_config
     )
-    run_tmux(["split-window", "-h", "-b", "-l", width, "-t", right_pane, sidebar_cmd])
+    sidebar_pane = split_sidebar_pane(right_pane, width, sidebar_cmd)
+    remember_sidebar_reopen(right_pane, sidebar_pane, sidebar_cmd, width)
+    install_sidebar_reopen_key(script, python_bin, provider_text, args.codex_bin, args.claude_bin, width)
     run_tmux(["select-pane", "-t", right_pane])
     if args.no_attach:
         print(f"created tmux session: {session_name}")
