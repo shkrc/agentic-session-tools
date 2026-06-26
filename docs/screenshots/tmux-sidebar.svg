@@ -63,7 +63,7 @@
 <text x="652" y="488" fill="#7dd3fc" font-weight="700">Rename flow:</text>
 <text x="652" y="516" fill="#d1d5db">1. Enter resumes the selected session in this pane.</text>
 <text x="652" y="538" fill="#d1d5db">2. r stages /rename here; edit and press Enter.</text>
-<text x="652" y="560" fill="#d1d5db">3. Refresh reloads native provider metadata.</text>
+<text x="652" y="560" fill="#d1d5db">3. Sidebar pauses scanning; R refreshes names.</text>
 <text x="652" y="582" fill="#d1d5db">If the agent is still generating, sidebar shows:</text>
 <text x="652" y="604" fill="#fbbf24">wait, session busy</text>
 <rect x="642" y="632" width="768" height="34" rx="4" fill="#0b1020" stroke="#1f2937"/>

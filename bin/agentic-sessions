@@ -1294,7 +1294,7 @@ def tmux_help_lines(providers: Sequence[str], prefix: str | None = None) -> list
         "Sidebar",
         "  ↑/↓ or j/k     move selection",
         "  Enter          resume selected session in the right pane",
-        "  r              native rename the active resumed session",
+        "  r              stage native /rename for the active resumed session",
         "  d              trash selected session after DELETE",
         "  /, c, R        search, clear search, refresh",
         "  ?              expand/collapse sidebar help",
@@ -1511,7 +1511,7 @@ cat <<AGENTIC_SESSIONS_HELP
 Sidebar keys:
   j/k or arrows : move
   Enter         : resume here
-  r             : native rename active session
+  r             : prefill native /rename in agent pane
   d             : trash; confirm DELETE
   /             : search
   c             : clear search
@@ -1538,7 +1538,7 @@ def print_right_pane_help(providers: Sequence[str]) -> None:
         "Sidebar keys:\n"
         "  j/k or arrows : move\n"
         "  Enter         : resume here\n"
-        "  r             : native rename active session\n"
+        "  r             : prefill native /rename in agent pane\n"
         "  d             : trash; confirm DELETE\n"
         "  /             : search\n"
         "  c             : clear search\n"
@@ -1941,6 +1941,7 @@ def sidebar_curses(stdscr: curses.window, args: argparse.Namespace) -> int:
     enriched_paths: set[str] = set()
     loader: SidebarIndexLoader | None = None
     needs_reload = True
+    scan_paused = False
     while True:
         if needs_reload:
             loader = SidebarIndexLoader(configs, query, include_generated=include_generated_sessions(args))
@@ -1948,9 +1949,10 @@ def sidebar_curses(stdscr: curses.window, args: argparse.Namespace) -> int:
             names_by_provider = loader.names_by_provider
             enriched_paths = set()
             needs_reload = False
+            scan_paused = False
             message = loader.status(len(sessions)) if sessions or not loader.done else "no sessions found"
             selected = min(selected, len(sessions) - 1) if sessions else 0
-        elif loader and not loader.done:
+        elif loader and not loader.done and not scan_paused:
             added = loader.load_more(len(sessions), limit=args.limit, path_budget=80)
             if added:
                 selected_key = (
@@ -1980,7 +1982,7 @@ def sidebar_curses(stdscr: curses.window, args: argparse.Namespace) -> int:
         if show_help:
             help_lines = [
                 "Keys  ↑↓/j/k move · PgUp/PgDn jump · Enter resume selected",
-                "Edit  r native rename active · d trash · / search · c clear · R refresh",
+                "Edit  r stage /rename active · d trash · / search · c clear · R refresh",
                 f"Tmux  {tmux_prefix}+b sidebar · {tmux_prefix}+←/→ panes · mouse click focus",
                 "Help  ? hide keys · q close sidebar",
             ]
@@ -2051,12 +2053,15 @@ def sidebar_curses(stdscr: curses.window, args: argparse.Namespace) -> int:
                 query = value.strip()
                 selected = 0
                 needs_reload = True
+                scan_paused = False
         elif key in (ord("c"),):
             query = ""
             selected = 0
             needs_reload = True
+            scan_paused = False
         elif key == ord("R"):
             needs_reload = True
+            scan_paused = False
         elif key in (10, 13):
             if sessions:
                 current = sessions[selected]
@@ -2073,7 +2078,8 @@ def sidebar_curses(stdscr: curses.window, args: argparse.Namespace) -> int:
                 else:
                     default_title = default_native_rename_title(current)
                     send_native_rename_to_pane(args.target_pane, default_title, submit=False)
-                    message = "edit native name in agent pane"
+                    scan_paused = True
+                    message = "edit native name in agent pane; R refreshes"
         elif key == ord("d"):
             if sessions:
                 current = sessions[selected]

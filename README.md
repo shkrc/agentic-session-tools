@@ -310,7 +310,9 @@ provider-native `/rename` command only for the active session already resumed in
 the right pane, then leaves the cursor there for editing and Enter; if another
 row is selected, resume it first. If the pane is still busy, the sidebar asks
 you to wait. Prompt context remains separate and is never used as a rename
-default. The
+default. Staging rename pauses background sidebar scanning and repaints the
+current list as-is; press `R` after submitting the native rename if you want to
+reload provider-owned names. The
 sidebar first sorts candidate session files by last-used file mtime, then parses
 them in small chunks so the pane can paint quickly and keep refreshing
 newest-first. It caches loaded rows for fast arrow-key navigation and reloads
