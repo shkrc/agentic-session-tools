@@ -1911,9 +1911,11 @@ def pane_looks_ready_for_slash_command(target_pane: str, session: Session, agent
 
 
 def send_native_rename_to_pane(target_pane: str, title: str, submit: bool = True) -> None:
-    command = "/rename " + title if title else "/rename "
     subprocess.run(["tmux", "send-keys", "-t", target_pane, "C-u"], check=False)
-    subprocess.run(["tmux", "send-keys", "-t", target_pane, "-l", command], check=False)
+    subprocess.run(["tmux", "send-keys", "-t", target_pane, "-l", "/rename"], check=False)
+    subprocess.run(["tmux", "send-keys", "-t", target_pane, "Space"], check=False)
+    if title:
+        subprocess.run(["tmux", "send-keys", "-t", target_pane, "-l", title], check=False)
     if submit:
         subprocess.run(["tmux", "send-keys", "-t", target_pane, "Enter"], check=False)
     subprocess.run(["tmux", "select-pane", "-t", target_pane], check=False)
