@@ -1681,7 +1681,7 @@ def sidebar_line(session: Session, width: int, selected: bool) -> str:
 
 
 def sidebar_card_height(width: int) -> int:
-    return 6 if width >= 34 else 1
+    return 5 if width >= 34 else 1
 
 
 def sidebar_card_stride(width: int, height: int) -> int:
@@ -1731,24 +1731,28 @@ def prompt_context_lines(session: Session, width: int) -> list[str]:
     return [first_prefix + first, next_prefix + (continuation[0] if continuation else "")]
 
 
+def sidebar_card_title(session: Session, width: int, selected: bool) -> str:
+    marker = "›" if selected else " "
+    age = format_time(session.modified)[5:16]
+    provider = sidebar_provider_label(session.provider, width)
+    title = session.native_title or session.custom_title
+    custom = "★ " if session.custom_title else ""
+    label = f"─ {marker} {age} · {provider}"
+    if title:
+        label += f" · {custom}{title} "
+    else:
+        label += " "
+    return label
+
+
 def sidebar_card_lines(session: Session, width: int, selected: bool) -> list[str]:
     if sidebar_card_height(width) == 1:
         return [sidebar_line(session, width, selected)]
-    marker = "›" if selected else " "
-    age = format_time(session.modified)[5:16]
-    if session.custom_title:
-        name = "name: ★ " + session.custom_title
-    elif session.native_title:
-        name = "name: " + session.native_title
-    else:
-        name = "name: -"
     context = prompt_context_lines(session, width)
     cwd_text = short_cwd(session.cwd, max(10, width - 10))
-    provider = sidebar_provider_label(session.provider, width)
     return [
-        box_border("╭", "╮", f"─ {marker} {provider} {age} ", width),
+        box_border("╭", "╮", sidebar_card_title(session, width, selected), width),
         box_content("cwd: " + cwd_text, width),
-        box_content(name, width),
         box_content(context[0], width),
         box_content(context[1], width),
         box_border("╰", "╯", f"─ {session.id[:12]} ", width),

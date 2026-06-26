@@ -12,36 +12,32 @@
 <rect x="16" y="56" width="606" height="24" rx="4" fill="#1e293b"/>
 <text x="24" y="74" fill="#f8fafc"> Agentic Sessions</text>
 <text x="24" y="98" fill="#94a3b8">↑↓/j/k move · Enter resume · / search · ? details · q close</text>
-<rect x="20" y="106" width="598" height="128" rx="8" fill="#3b2f27" stroke="#b45309"/>
-<text x="24" y="124" fill="#fde68a">╭─ › Claude 06-25 16:22 ───────────────────────────────────────╮</text>
+<rect x="20" y="106" width="598" height="106" rx="8" fill="#3b2f27" stroke="#b45309"/>
+<text x="24" y="124" fill="#fde68a">╭─ › 06-25 16:22 · Claude · purrfect-forging-horizon ───────────╮</text>
 <text x="24" y="146" fill="#fde68a">│ cwd: ~/git/ml-bug-feature-extractor                     │</text>
-<text x="24" y="168" fill="#fde68a">│ name: purrfect-forging-horizon                          │</text>
-<text x="24" y="190" fill="#fde68a">│ context: review PR split strategy and generate concise  │</text>
-<text x="24" y="212" fill="#fde68a">│          reviewer response plan                         │</text>
-<text x="24" y="234" fill="#fde68a">╰─ e8eddec2-36e ─────────────────────────────────────────╯</text>
-<rect x="20" y="250" width="598" height="128" rx="8" fill="#111827" stroke="#475569"/>
-<text x="24" y="268" fill="#d1d5db">╭─   Codex 06-25 15:40 ───────────────────────────────────────╮</text>
-<text x="24" y="290" fill="#d1d5db">│ cwd: ~/git/firmware                                     │</text>
-<text x="24" y="312" fill="#d1d5db">│ name: Boot flow PR review                               │</text>
-<text x="24" y="334" fill="#d1d5db">│ context: Review boot flow comments and prepare          │</text>
-<text x="24" y="356" fill="#d1d5db">│          review_comments.md                             │</text>
-<text x="24" y="378" fill="#d1d5db">╰─ 019f0fff-9bb ─────────────────────────────────────────╯</text>
-<rect x="20" y="394" width="598" height="128" rx="8" fill="#111827" stroke="#475569"/>
-<text x="24" y="412" fill="#d1d5db">╭─   Codex 06-22 18:42 ───────────────────────────────────────╮</text>
-<text x="24" y="434" fill="#d1d5db">│ cwd: ~/workspace/docs                                   │</text>
-<text x="24" y="456" fill="#d1d5db">│ name: RPMI telemetry docs                               │</text>
-<text x="24" y="478" fill="#d1d5db">│ context: Summarize telemetry design and identify        │</text>
-<text x="24" y="500" fill="#d1d5db">│          missing validation steps                       │</text>
-<text x="24" y="522" fill="#d1d5db">╰─ 019f0eee-812 ─────────────────────────────────────────╯</text>
-<rect x="20" y="538" width="598" height="128" rx="8" fill="#111827" stroke="#475569"/>
-<text x="24" y="556" fill="#d1d5db">╭─   Claude 06-18 11:15 ───────────────────────────────────────╮</text>
-<text x="24" y="578" fill="#d1d5db">│ cwd: ~/git/reviewer                                     │</text>
-<text x="24" y="600" fill="#d1d5db">│ name: stacked-pr-review                                 │</text>
-<text x="24" y="622" fill="#d1d5db">│ context: Split a large change set into focused          │</text>
-<text x="24" y="644" fill="#d1d5db">│          stacked PR review chunks                       │</text>
-<text x="24" y="666" fill="#d1d5db">╰─ 5656cd9d-4e9 ─────────────────────────────────────────╯</text>
+<text x="24" y="168" fill="#fde68a">│ context: review PR split strategy and generate concise  │</text>
+<text x="24" y="190" fill="#fde68a">│          reviewer response plan                         │</text>
+<text x="24" y="212" fill="#fde68a">╰─ e8eddec2-36e ─────────────────────────────────────────╯</text>
+<rect x="20" y="228" width="598" height="106" rx="8" fill="#111827" stroke="#475569"/>
+<text x="24" y="246" fill="#d1d5db">╭─   06-25 15:40 · Codex · Boot flow PR review ────────────────╮</text>
+<text x="24" y="268" fill="#d1d5db">│ cwd: ~/git/firmware                                     │</text>
+<text x="24" y="290" fill="#d1d5db">│ context: Review boot flow comments and prepare          │</text>
+<text x="24" y="312" fill="#d1d5db">│          review_comments.md                             │</text>
+<text x="24" y="334" fill="#d1d5db">╰─ 019f0fff-9bb ─────────────────────────────────────────╯</text>
+<rect x="20" y="350" width="598" height="106" rx="8" fill="#111827" stroke="#475569"/>
+<text x="24" y="368" fill="#d1d5db">╭─   06-22 18:42 · Codex · RPMI telemetry docs ────────────────╮</text>
+<text x="24" y="390" fill="#d1d5db">│ cwd: ~/workspace/docs                                   │</text>
+<text x="24" y="412" fill="#d1d5db">│ context: Summarize telemetry design and identify        │</text>
+<text x="24" y="434" fill="#d1d5db">│          missing validation steps                       │</text>
+<text x="24" y="456" fill="#d1d5db">╰─ 019f0eee-812 ─────────────────────────────────────────╯</text>
+<rect x="20" y="472" width="598" height="106" rx="8" fill="#111827" stroke="#475569"/>
+<text x="24" y="490" fill="#d1d5db">╭─   06-18 11:15 · Claude · stacked-pr-review ─────────────────╮</text>
+<text x="24" y="512" fill="#d1d5db">│ cwd: ~/git/reviewer                                     │</text>
+<text x="24" y="534" fill="#d1d5db">│ context: Split a large change set into focused          │</text>
+<text x="24" y="556" fill="#d1d5db">│          stacked PR review chunks                       │</text>
+<text x="24" y="578" fill="#d1d5db">╰─ 5656cd9d-4e9 ─────────────────────────────────────────╯</text>
 <text x="24" y="696" fill="#c4b5fd">1/42 claude:e8eddec2-36e ~/git/ml-bug-feature-extractor</text>
-<text x="24" y="718" fill="#7dd3fc">loaded 42 sessions; scanning 490/25286 files</text>
+<text x="24" y="718" fill="#7dd3fc">edit native name in agent pane; R refreshes</text>
 <text x="652" y="76" fill="#94a3b8">Claude resumed session e8eddec2-36e…</text>
 <text x="652" y="98" fill="#94a3b8">cwd: ~/git/ml-bug-feature-extractor</text>
 <text x="652" y="120" fill="#94a3b8">native name: purrfect-forging-horizon</text>
@@ -64,10 +60,10 @@
 <text x="652" y="516" fill="#d1d5db">1. Enter resumes the selected session in this pane.</text>
 <text x="652" y="538" fill="#d1d5db">2. r stages /rename here; edit and press Enter.</text>
 <text x="652" y="560" fill="#d1d5db">3. Sidebar pauses scanning; R refreshes names.</text>
-<text x="652" y="582" fill="#d1d5db">If the agent is still generating, sidebar shows:</text>
-<text x="652" y="604" fill="#fbbf24">wait, session busy</text>
+<text x="652" y="582" fill="#d1d5db">During staged rename:</text>
+<text x="652" y="604" fill="#fbbf24">scan pauses while rename is staged</text>
 <rect x="642" y="632" width="768" height="34" rx="4" fill="#0b1020" stroke="#1f2937"/>
-<text x="652" y="655" fill="#7dd3fc">❯ </text>
+<text x="652" y="655" fill="#7dd3fc">❯ /rename purrfect-forging-horizon</text>
 <rect x="0" y="720" width="100%" height="40" fill="#1e293b"/>
 <rect x="0" y="720" width="210" height="40" fill="#c7a27c"/>
 <text x="18" y="745" fill="#111827" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" font-weight="700">Agentic Sessions</text>

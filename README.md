@@ -34,40 +34,15 @@ contents.
 
 ## Requirements
 
-Required for core commands (`paths`, `list`, `rename`, `delete`):
+Required:
 
-- Linux/macOS shell environment
-- Python 3.7+
-- Python stdlib modules: `argparse`, `curses`, `dataclasses`, `datetime`,
-  `functools`, `json`, `os`, `pathlib`, `re`, `shutil`, `subprocess`, `time`,
-  `textwrap`
-  - Note: on some Linux distributions, `curses` is packaged separately as `python3-curses`.
-- Existing Codex session files under one of:
-  - `$CODEX_HOME/sessions`
-  - `$CODEX_HOME/agent/sessions`
-  - `~/.codex/sessions`
-  - `~/.config/codex/sessions`
-- Or Claude Code session files under one of:
-  - `$CLAUDE_CONFIG_DIR/projects`
-  - `$CLAUDE_HOME/projects`
-  - `~/.claude/projects`
-  - `~/.config/claude/projects`
+- Linux/macOS shell environment with Python 3.7+ and stdlib `curses`.
+- Codex sessions under `$CODEX_HOME/sessions`, `$CODEX_HOME/agent/sessions`, `~/.codex/sessions`, or `~/.config/codex/sessions`.
+- Claude sessions under `$CLAUDE_CONFIG_DIR/projects`, `$CLAUDE_HOME/projects`, `~/.claude/projects`, or `~/.config/claude/projects`.
+- `codex`/`claude` in `PATH`, common install locations, or explicit `CODEX_BIN` / `CLAUDE_BIN` for resume/sidebar.
+- `tmux` for `agentic-sessions tmux`; `bash` and `install` for `install.sh`.
 
-Required for resume/sidebar workflows:
-
-- Codex installed as `codex`, available at `~/.local/bin/codex`, or configured via `CODEX_BIN=/path/to/codex`
-- Claude Code installed as `claude`, available at `~/.local/bin/claude`, or configured via `CLAUDE_BIN=/path/to/claude`
-- A compatible wrapper can be used by setting `CODEX_BIN` or `CLAUDE_BIN` to that executable path or command name
-- `tmux` for `agentic-sessions tmux`
-- A POSIX-compatible shell for tmux pane bootstrap snippets (`sh`, `bash`, or `zsh`)
-
-Required only for installation/packaging:
-
-- `bash` to run `install.sh`
-- `install` command from GNU coreutils/BSD userland
-- `tar` and `sha256sum` only if you want to recreate the shareable archive/checksum
-
-Not required by the tool: `jq`, `fzf`, `gum`, `dialog`, `zellij`, `textual`, `prompt_toolkit`, or any Python packages outside the standard library.
+No external Python packages are required. On some Linux distributions, install `python3-curses` separately.
 
 Run this after install to verify a machine:
 
@@ -75,7 +50,7 @@ Run this after install to verify a machine:
 agentic-sessions doctor
 ```
 
-Use `--strict` when validating full sidebar/resume readiness, including the selected agent CLI and `tmux`:
+Use `--strict` to include agent CLI and `tmux` checks:
 
 ```bash
 agentic-sessions doctor --strict
@@ -169,56 +144,27 @@ a backward-compatible entry point for existing scripts and muscle memory.
 
 ## Shell RC / Alias Notes
 
-The tool itself does **not** require `~/.zshrc`, `~/.bashrc`, or any team-specific shell setup.
+Shell rc changes are optional. `./install.sh --aliases` adds `ags`, `cs`, and
+`cxs` to the detected rc file (`~/.zshrc`, `~/.bashrc`, or `~/.profile`) and
+prints the reload command. To avoid rc changes, add the install prefix to `PATH`
+or run `bin/agentic-sessions` directly.
 
-Shell rc changes are optional and only used for convenience aliases:
-
-```bash
-alias ags='/path/to/agentic-sessions '
-alias cs='/path/to/agentic-sessions '
-alias cxs='/path/to/codex-sessions '
-```
-
-`./install.sh --aliases` appends those aliases to the detected running shell rc file:
-
-- zsh: `~/.zshrc`
-- bash: `~/.bashrc`
-- fallback: `~/.profile`
-
-The installer cannot modify the already-running parent shell directly, so it prints
-the exact command to activate aliases immediately, such as `source ~/.zshrc`.
-
-If a teammate does not want rc-file changes, use one of these instead:
-
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-agentic-sessions tmux
-```
-
-or run directly:
-
-```bash
-/path/to/agentic-session-tools/bin/agentic-sessions tmux
-```
-
-If someone has a custom `codex()` or `claude()` shell function in their rc file, it is not required by this tool.
-The sidebar resolves the selected provider through `CODEX_BIN`/`CLAUDE_BIN`, `PATH`, or common install locations and sends an absolute binary path when possible. If the wrong executable is selected, set:
+The sidebar resolves agent CLIs through `CODEX_BIN`/`CLAUDE_BIN`, `PATH`, or
+common install locations. If the wrong executable is selected, set:
 
 ```bash
 export CODEX_BIN=/absolute/path/to/codex
 export CLAUDE_BIN=/absolute/path/to/claude
 ```
 
-`CODEX_BIN` and `CLAUDE_BIN` are intentionally generic: they may point to the real
-CLI or a compatible wrapper executable. The tool does not hardcode wrapper names.
-
-For teams that wrap Codex with `script` for chat logs, ensure the util-linux `script` argument order is correct on that machine. Common Linux form:
+`CODEX_BIN` and `CLAUDE_BIN` may point to the real CLI or a compatible wrapper.
+For wrappers using `script`, common Linux argument order is:
 
 ```bash
 script -qf -c "/path/to/codex resume <id>" /path/to/logfile
 ```
 
-BSD/macOS variants may differ; this wrapper is optional and not part of `agentic-session-tools`.
+BSD/macOS `script` variants may differ.
 
 ## Commands
 
@@ -302,51 +248,20 @@ Outside tmux, it creates a new tmux session with one window and two panes.
 - detected tmux prefix + `b`: reopen the sidebar if it was closed
 - mouse click: focus the clicked pane when tmux mouse mode is enabled
 
-The sidebar shows sessions as compact boxed cards with provider/time, cwd,
-provider/native or custom `name`, two lines of prompt `context`, and short id.
-Native names are read when available, for example Codex/QGenie `thread_name`
-from `session_index.jsonl` and Claude `slug` from project JSONL. `r` stages the
-provider-native `/rename` command only for the active session already resumed in
-the right pane, then leaves the cursor there for editing and Enter; if another
-row is selected, resume it first. If the pane is still busy, the sidebar asks
-you to wait. Prompt context remains separate and is never used as a rename
-default. Staging rename pauses background sidebar scanning and repaints the
-current list as-is; press `R` after submitting the native rename if you want to
-reload provider-owned names. The
-sidebar first sorts candidate session files by last-used file mtime, then parses
-them in small chunks so the pane can paint quickly and keep refreshing
-newest-first. It caches loaded rows for fast arrow-key navigation and reloads
-only on search, clear, rename, delete, or manual refresh.
-The runtime help prints your configured tmux prefix directly, for example
-`C-b + Left` or `C-a + Left`. `tmux` mode also stores a window-local
-reopen command and binds prefix + `b`; if you close the sidebar with `q`, press
-prefix + `b` from the same tmux window to bring it back. The tmux status bar
-keeps the workspace title on the left and compact pane/key help on the right,
-so the title and recovery hint remain visible across both panes after the
-sidebar closes. The status-bar `?` hint means detected tmux prefix + `?`, so it
-works from either pane. Plain `?` also works inside the sidebar to show the same
-help and expand the sidebar key list, following the same lightweight
-discoverability pattern as `claude-history`.
-When the terminal supports colors, the sidebar uses a muted Claude-style palette
-for the header, selected row, help, and status lines; monochrome terminals fall
-back to plain reverse/dim text.
-When `Enter` switches sessions, the previously running right-pane agent is left as
-a suspended shell job rather than killed; run `jobs` or `fg` in that pane if you
-need to inspect or return to it.
+Sidebar behavior:
 
-The sidebar indexes all top-level sessions by default, not just the first page.
-Visible rows are enriched with prompt/CWD details as you scroll. Generated child,
-background, and SDK probe sessions are hidden unless you run the hidden sidebar
-command with `--all` for raw-file inspection.
+- Card titles show `time · provider · name`; body rows show cwd, prompt `context`, and short id.
+- Native names come from Codex/QGenie `session_index.jsonl` `thread_name` and Claude project JSONL `slug` when available.
+- `r` stages `/rename <current-name>` in the right pane only for the active resumed session; edit there and press `Enter` yourself.
+- Prompt context is never used as a rename default. Staging rename pauses background scanning; press `R` after submitting if you want native names reloaded.
+- Sessions load newest-first in chunks for fast first paint and cached navigation. Search, clear, delete, and `R` reload.
+- Prefix + `b` reopens the sidebar. Prefix + `?` shows help from either pane. The tmux status bar keeps these hints visible after the sidebar closes.
+- Switching sessions suspends the current right-pane agent with `Ctrl-Z`; use `jobs`/`fg` there if needed.
 
 ## Optional tmux Configuration
 
-The installer adds `set -g mouse on` to `~/.tmux.conf` when no tmux mouse setting
-is already present, so clicking a pane focuses it. Pass `--no-tmux-mouse` to skip
-that change, or `--tmux /path/to/tmux.conf` to choose a different config file.
-
-If you also want copy-on-drag and quick pane switching, add a local tmux snippet
-such as:
+The installer adds `set -g mouse on` to `~/.tmux.conf` only when no tmux mouse
+setting exists. Use `--no-tmux-mouse` to skip it. Optional local extras:
 
 ```tmux
 set -g mouse on
@@ -361,7 +276,7 @@ bind -n S-Right select-pane -t :.+
 bind -n S-Left select-pane -t :.-
 ```
 
-Reload tmux configuration after editing:
+Reload after editing:
 
 ```bash
 tmux source-file ~/.tmux.conf
@@ -431,16 +346,8 @@ Environment variables:
 
 ## Validation Status
 
-This package was smoke-tested in a clean Docker container based on Ubuntu with Python 3.8.10, no `tmux`, and no real Codex installed. The script is kept Python 3.7-compatible for older hosts. Validated paths:
-
-- `install.sh --prefix ... --aliases --shell ...`
-- `agentic-sessions doctor` with missing optional agent/tmux warnings
-- `agentic-sessions doctor --strict` failing when optional sidebar/resume deps are absent
-- `list`, `rename`, `delete`, and trash manifest using fake session JSONL
-- `resume` using a fake `codex` binary in `PATH`
-- `--provider claude` paths, doctor, list, resume command rendering, and tmux dry-run against local Claude Code JSONL sessions
-
-The tmux sidebar was validated on the host environment where real `tmux` is available.
+Validated with Python 3.7-compatible syntax checks, fake Codex/Claude sessions,
+install/doctor/list/resume/delete flows, tmux dry-run, and host tmux sidebar use.
 
 ## Troubleshooting
 
@@ -499,30 +406,13 @@ agentic-sessions --provider claude --sessions-root /path/to/claude/projects list
 
 ## Sharing With Teammates
 
-Recommended options:
+Share the directory or archive it, then install or run directly:
 
-1. Share the directory as-is:
-
-   ```bash
-   tar -czf agentic-session-tools.tar.gz agentic-session-tools
-   ```
-
-2. Teammates unpack and install:
-
-   ```bash
-   tar -xzf agentic-session-tools.tar.gz
-   cd agentic-session-tools
-   ./install.sh --aliases
-   # Follow the printed "Quick start" commands.
-   ags tmux
-   ```
-
-3. Or run directly without installation:
-
-   ```bash
-   ./bin/agentic-sessions list -n 10
-   ./bin/agentic-sessions tmux
-   ```
+```bash
+tar -czf agentic-session-tools.tar.gz agentic-session-tools
+./install.sh --aliases
+./bin/agentic-sessions tmux
+```
 
 ## Uninstall
 
