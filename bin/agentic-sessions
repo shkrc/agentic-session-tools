@@ -1852,6 +1852,11 @@ def sanitize_native_name(name: str) -> str:
     return normalize_ws("".join(char for char in name if char.isprintable()), limit=120)
 
 
+def default_native_rename_title(session: Session) -> str:
+    title = session.native_title or session.custom_title or session.title
+    return sanitize_native_name(title)
+
+
 def capture_pane_tail(target_pane: str, lines: int = 40) -> str:
     try:
         result = subprocess.run(
@@ -2063,11 +2068,12 @@ def sidebar_curses(stdscr: curses.window, args: argparse.Namespace) -> int:
                 elif not pane_looks_ready_for_slash_command(args.target_pane, current, agent_bins[current.provider]):
                     message = "wait, session busy"
                 else:
-                    value = prompt(stdscr, height - 1, "native name", current.native_title or current.custom_title)
+                    default_title = default_native_rename_title(current)
+                    value = prompt(stdscr, height - 1, "native name", default_title)
                     if value is not None:
-                        value = sanitize_native_name(value)
+                        value = sanitize_native_name(value) or default_title
                         if not value:
-                            message = "native rename needs a non-empty name"
+                            message = "native rename cancelled"
                         else:
                             send_native_rename_to_pane(args.target_pane, value)
                             current.native_title = value
