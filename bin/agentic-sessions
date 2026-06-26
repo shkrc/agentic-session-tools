@@ -1271,6 +1271,158 @@ def remember_sidebar_reopen(target_pane: str, sidebar_pane: str, sidebar_cmd: st
     set_window_option(target_pane, "@agentic_sessions_sidebar_cmd", sidebar_cmd, dry_run)
 
 
+def tmux_status_title(providers: Sequence[str]) -> str:
+    title = providers_title(providers)
+    return f"#[fg=colour235,bg=colour180,bold] {title} Sessions #[default]"
+
+
+def tmux_status_hint(providers: Sequence[str]) -> str:
+    prefix = tmux_prefix_key("prefix")
+    return (
+        f"#[fg=colour180]{prefix}+? keys "
+        f"#[fg=colour244]{prefix}+b sidebar "
+        f"#[fg=colour244]{prefix}+←/→ panes "
+        f"#[fg=colour244]mouse focus"
+    )
+
+
+def tmux_help_lines(providers: Sequence[str], prefix: str | None = None) -> list[str]:
+    prefix = prefix or tmux_prefix_key("prefix")
+    return [
+        f"{providers_title(providers)} Sessions keys",
+        "",
+        "Sidebar",
+        "  ↑/↓ or j/k     move selection",
+        "  Enter          resume selected session in the right pane",
+        "  r              native rename the active resumed session",
+        "  d              trash selected session after DELETE",
+        "  /, c, R        search, clear search, refresh",
+        "  ?              expand/collapse sidebar help",
+        "  q              close sidebar pane",
+        "",
+        "Tmux",
+        f"  {prefix} + ?        show this help popup from either pane",
+        f"  {prefix} + b        reopen or focus the sidebar",
+        f"  {prefix} + Left     focus sidebar pane",
+        f"  {prefix} + Right    focus agent pane",
+        "  mouse click     focus clicked pane when tmux mouse is on",
+    ]
+
+
+def tmux_help_popup_command(providers: Sequence[str]) -> tuple[str, str]:
+    title = f"{providers_title(providers)} Sessions keys"
+    body = "\n".join(tmux_help_lines(providers)) + "\n\nPress Enter to close."
+    command = "printf %s " + shell_quote(body) + "; IFS= read -r _"
+    return title, command
+
+
+def tmux_help_fallback_message(providers: Sequence[str]) -> str:
+    prefix = tmux_prefix_key("prefix")
+    return f"{providers_title(providers)}: Enter resume | / search | ? sidebar help | {prefix}+b sidebar | {prefix}+←/→ panes"
+
+
+def tmux_help_popup_script(providers: Sequence[str]) -> str:
+    title, command = tmux_help_popup_command(providers)
+    fallback = tmux_help_fallback_message(providers)
+    return (
+        "if tmux display-popup -E -w 78% -h 70% -T "
+        + shell_quote(title)
+        + " "
+        + shell_quote(command)
+        + "; then :; else tmux display-message "
+        + shell_quote(fallback)
+        + "; fi"
+    )
+
+
+def show_tmux_help_popup(providers: Sequence[str]) -> bool:
+    title, command = tmux_help_popup_command(providers)
+    result = subprocess.run(
+        ["tmux", "display-popup", "-E", "-w", "78%", "-h", "70%", "-T", title, command],
+        text=True,
+        check=False,
+        capture_output=True,
+    )
+    if result.returncode == 0:
+        return True
+    subprocess.run(["tmux", "display-message", tmux_help_fallback_message(providers)], check=False)
+    return False
+
+
+def ensure_tmux_status_segment(
+    option_name: str,
+    marker: str,
+    original_marker: str,
+    segment: str,
+    append: bool,
+    dry_run: bool = False,
+) -> None:
+    current = ""
+    if not dry_run:
+        try:
+            result = subprocess.run(
+                ["tmux", "show-option", "-qv", option_name],
+                text=True,
+                check=False,
+                capture_output=True,
+            )
+            current = result.stdout.rstrip("\n") if result.returncode == 0 else ""
+        except Exception:
+            current = ""
+    if marker not in current:
+        run_tmux(["set-option", "-q", original_marker, current], dry_run)
+        separator = " " if current else ""
+        updated = current + separator + segment if append else segment + separator + current
+        run_tmux(["set-option", "-q", option_name, updated], dry_run)
+
+
+def ensure_tmux_status_length(option_name: str, minimum: int, dry_run: bool = False) -> None:
+    current = 0
+    if not dry_run:
+        try:
+            result = subprocess.run(
+                ["tmux", "show-option", "-qv", option_name],
+                text=True,
+                check=False,
+                capture_output=True,
+            )
+            current = int(result.stdout.strip()) if result.returncode == 0 and result.stdout.strip() else 0
+        except Exception:
+            current = 0
+    if current < minimum:
+        run_tmux(["set-option", "-q", option_name, str(minimum)], dry_run)
+
+
+def install_tmux_status_hint(providers: Sequence[str], dry_run: bool = False) -> None:
+    title_marker = "@agentic_sessions_status_title"
+    hint_marker = "@agentic_sessions_status_hint"
+    ensure_tmux_status_segment(
+        "status-left",
+        title_marker,
+        "@agentic_sessions_status_original_left",
+        "#{@agentic_sessions_status_title}",
+        False,
+        dry_run,
+    )
+    ensure_tmux_status_segment(
+        "status-right",
+        hint_marker,
+        "@agentic_sessions_status_original_right",
+        "#[default]#{@agentic_sessions_status_hint}",
+        True,
+        dry_run,
+    )
+    ensure_tmux_status_length("status-left-length", 32, dry_run)
+    ensure_tmux_status_length("status-right-length", 120, dry_run)
+    run_tmux(["set-option", "-q", title_marker, tmux_status_title(providers)], dry_run)
+    run_tmux(["set-option", "-q", hint_marker, tmux_status_hint(providers)], dry_run)
+    run_tmux(["set-option", "-q", "status", "on"], dry_run)
+
+
+def install_tmux_help_key(providers: Sequence[str], dry_run: bool = False) -> None:
+    run_tmux(["bind-key", "?", "run-shell", tmux_help_popup_script(providers)], dry_run)
+
+
 def tmux_prefix_key_bound(key: str) -> bool:
     try:
         result = subprocess.run(
@@ -1368,9 +1520,12 @@ Sidebar keys:
 Tmux pane keys:
   ${prefix} + Left : focus sidebar pane
   ${prefix} + Right: focus agent pane
+  ${prefix} + ?    : show key help popup
   ${prefix} + b    : reopen sidebar if closed
   mouse click     : focus clicked pane if tmux mouse is on
 
+The tmux status bar keeps the workspace title and pane keys visible
+across both panes, even after the sidebar closes.
 Select a session from the left pane to start.
 AGENTIC_SESSIONS_HELP
 exec "${SHELL:-/bin/bash}" -l"""
@@ -1391,8 +1546,11 @@ def print_right_pane_help(providers: Sequence[str]) -> None:
         "Tmux pane keys:\n"
         f"  {prefix} + Left : focus sidebar pane\n"
         f"  {prefix} + Right: focus agent pane\n"
+        f"  {prefix} + ?    : show key help popup\n"
         f"  {prefix} + b    : reopen sidebar if closed\n"
         "  mouse click  : focus clicked pane if tmux mouse is on\n\n"
+        "The tmux status bar keeps the workspace title and pane keys visible\n"
+        "across both panes, even after the sidebar closes.\n"
         "Select a session from the left pane to start.\n",
         flush=True,
     )
@@ -1470,11 +1628,15 @@ def command_tmux(args: argparse.Namespace) -> int:
             split_sidebar_pane(right_pane, width, sidebar_cmd, True)
             remember_sidebar_reopen(right_pane, "", sidebar_cmd, width, True)
             install_sidebar_reopen_key(script, python_bin, provider_text, args.codex_bin, args.claude_bin, width, True)
+            install_tmux_help_key(providers, True)
+            install_tmux_status_hint(providers, True)
             run_tmux(["select-pane", "-t", right_pane], True)
             return 0
         sidebar_pane = split_sidebar_pane(right_pane, width, sidebar_cmd)
         remember_sidebar_reopen(right_pane, sidebar_pane, sidebar_cmd, width)
         install_sidebar_reopen_key(script, python_bin, provider_text, args.codex_bin, args.claude_bin, width)
+        install_tmux_help_key(providers)
+        install_tmux_status_hint(providers)
         run_tmux(["select-pane", "-t", right_pane])
         return 0
 
@@ -1494,6 +1656,8 @@ def command_tmux(args: argparse.Namespace) -> int:
     sidebar_pane = split_sidebar_pane(right_pane, width, sidebar_cmd)
     remember_sidebar_reopen(right_pane, sidebar_pane, sidebar_cmd, width)
     install_sidebar_reopen_key(script, python_bin, provider_text, args.codex_bin, args.claude_bin, width)
+    install_tmux_help_key(providers)
+    install_tmux_status_hint(providers)
     run_tmux(["select-pane", "-t", right_pane])
     if args.no_attach:
         print(f"created tmux session: {session_name}")
@@ -1731,17 +1895,19 @@ def pane_looks_ready_for_slash_command(target_pane: str, session: Session, agent
         return False
     tail = [line.rstrip() for line in capture_pane_tail(target_pane, lines=30).splitlines()]
     visible = [line for line in tail if line.strip()]
+    prompt_markers = ("❯", "›")
     for line in visible[-8:]:
         stripped = line.strip()
         if stripped in {"❯", ">", "›"}:
             return True
-        if stripped.startswith(("❯", "›")) and len(stripped) <= 8:
+        if stripped.startswith(prompt_markers):
             return True
     return False
 
 
 def send_native_rename_to_pane(target_pane: str, title: str) -> None:
     command = "/rename " + title
+    subprocess.run(["tmux", "send-keys", "-t", target_pane, "C-u"], check=False)
     subprocess.run(["tmux", "send-keys", "-t", target_pane, "-l", command], check=False)
     subprocess.run(["tmux", "send-keys", "-t", target_pane, "Enter"], check=False)
     subprocess.run(["tmux", "select-pane", "-t", target_pane], check=False)
@@ -1756,9 +1922,12 @@ def sidebar_curses(stdscr: curses.window, args: argparse.Namespace) -> int:
     stdscr.timeout(120)
     selected = 0
     query = ""
-    help_text = f"{providers_title(providers)} ↑↓/j/k move Enter resume r native-rename d trash / search c clear R refresh q quit"
+    tmux_prefix = tmux_prefix_key()
+    help_text = "↑↓/j/k move · Enter resume · / search · ? details · q close"
+    help_lines = [help_text]
     message = help_text
     active_key = ""
+    show_help = False
     sessions: list[Session] = []
     names_by_provider: dict[str, dict] = {}
     enriched_paths: set[str] = set()
@@ -1800,15 +1969,24 @@ def sidebar_curses(stdscr: curses.window, args: argparse.Namespace) -> int:
         stdscr.erase()
         header = f" {providers_title(providers)} Sessions " + (f"/{query}" if query else "")
         stdscr.addnstr(0, 0, header.ljust(draw_width), draw_width, attrs["header"])
-        help_row = 1
-        list_start = 2
+        if show_help:
+            help_lines = [
+                "Keys  ↑↓/j/k move · PgUp/PgDn jump · Enter resume selected",
+                "Edit  r native rename active · d trash · / search · c clear · R refresh",
+                f"Tmux  {tmux_prefix}+b sidebar · {tmux_prefix}+←/→ panes · mouse click focus",
+                "Help  ? hide keys · q close sidebar",
+            ]
+        else:
+            help_lines = [help_text]
+        list_start = 1 + len(help_lines)
         card_height = sidebar_card_height(draw_width)
         card_stride = sidebar_card_stride(draw_width, height)
-        max_cards = max(0, (height - 5) // card_stride)
+        max_cards = max(0, (height - list_start - 2) // card_stride)
         page_size = max(1, max_cards)
         start = max(0, selected - page_size + 1)
         visible = sessions[start : start + page_size]
-        stdscr.addnstr(help_row, 0, shorten(help_text, draw_width).ljust(draw_width), draw_width, attrs["help"])
+        for line_offset, help_line in enumerate(help_lines):
+            stdscr.addnstr(1 + line_offset, 0, shorten(help_line, draw_width).ljust(draw_width), draw_width, attrs["help"])
         for offset, session in enumerate(visible):
             absolute_index = start + offset
             path_key = str(session.path)
@@ -1846,6 +2024,11 @@ def sidebar_curses(stdscr: curses.window, args: argparse.Namespace) -> int:
             continue
         if key in (ord("q"), 27):
             return 0
+        if key == ord("?"):
+            show_tmux_help_popup(providers)
+            show_help = not show_help
+            message = "showing key help" if show_help else help_text
+            continue
         if key in (curses.KEY_DOWN, ord("j")):
             selected = min(selected + 1, max(0, len(sessions) - 1))
         elif key in (curses.KEY_UP, ord("k")):

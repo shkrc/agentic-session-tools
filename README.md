@@ -294,9 +294,11 @@ Outside tmux, it creates a new tmux session with one window and two panes.
 - `/`: search/filter sessions
 - `c`: clear search filter
 - `R`: refresh cached session list
+- `?`: show key help popup and toggle expanded sidebar help
 - `q`: close the sidebar pane
 - detected tmux prefix + `Left`: focus the sidebar pane from the agent pane
 - detected tmux prefix + `Right`: focus the agent pane from the sidebar pane
+- detected tmux prefix + `?`: show key help popup from either pane
 - detected tmux prefix + `b`: reopen the sidebar if it was closed
 - mouse click: focus the clicked pane when tmux mouse mode is enabled
 
@@ -314,7 +316,13 @@ only on search, clear, rename, delete, or manual refresh.
 The runtime help prints your configured tmux prefix directly, for example
 `C-b + Left` or `C-a + Left`. `tmux` mode also stores a window-local
 reopen command and binds prefix + `b`; if you close the sidebar with `q`, press
-prefix + `b` from the same tmux window to bring it back.
+prefix + `b` from the same tmux window to bring it back. The tmux status bar
+keeps the workspace title on the left and compact pane/key help on the right,
+so the title and recovery hint remain visible across both panes after the
+sidebar closes. The status-bar `?` hint means detected tmux prefix + `?`, so it
+works from either pane. Plain `?` also works inside the sidebar to show the same
+help and expand the sidebar key list, following the same lightweight
+discoverability pattern as `claude-history`.
 When the terminal supports colors, the sidebar uses a muted Claude-style palette
 for the header, selected row, help, and status lines; monochrome terminals fall
 back to plain reverse/dim text.
