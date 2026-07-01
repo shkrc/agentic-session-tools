@@ -315,6 +315,7 @@ def is_injected_user_context(text: str) -> bool:
         "<system>",
         "<developer>",
         "<environment_context>",
+        "<system-reminder>",
         "<turn_aborted>",
         "<skill>",
         "<user>",
@@ -326,6 +327,21 @@ def is_injected_user_context(text: str) -> bool:
     if "<environment_context>" in stripped and "</environment_context>" in stripped and len(stripped) > 1000:
         return True
     return False
+
+
+def claude_title_from_record(record: dict) -> str:
+    if record.get("type") == "custom-title" and isinstance(record.get("customTitle"), str):
+        return str(record.get("customTitle")).strip()
+    if record.get("type") == "agent-name" and isinstance(record.get("agentName"), str):
+        return str(record.get("agentName")).strip()
+    return str(
+        record.get("name")
+        or record.get("displayName")
+        or record.get("sessionName")
+        or record.get("title")
+        or record.get("slug")
+        or ""
+    ).strip()
 
 
 def extract_text_from_message(payload: dict) -> str:
@@ -449,15 +465,9 @@ def parse_claude_session(
                     cli_version = str(record.get("version"))
                 if not entrypoint and record.get("entrypoint"):
                     entrypoint = str(record.get("entrypoint"))
-                if not native_title:
-                    native_title = str(
-                        record.get("name")
-                        or record.get("displayName")
-                        or record.get("sessionName")
-                        or record.get("title")
-                        or record.get("slug")
-                        or ""
-                    ).strip()
+                record_title = claude_title_from_record(record)
+                if record_title and (record.get("type") in {"custom-title", "agent-name"} or not native_title):
+                    native_title = record_title
 
                 message = record.get("message")
                 if isinstance(message, dict) and not model_provider and message.get("model"):
@@ -466,7 +476,12 @@ def parse_claude_session(
                 text = ""
                 if record.get("type") == "last-prompt" and isinstance(record.get("lastPrompt"), str):
                     text = str(record.get("lastPrompt"))
-                elif record.get("type") == "user" and isinstance(message, dict) and message.get("role") == "user":
+                elif (
+                    record.get("type") == "user"
+                    and not record.get("isMeta")
+                    and isinstance(message, dict)
+                    and message.get("role") == "user"
+                ):
                     text = extract_text_from_message(message)
 
                 if not text or is_injected_user_context(text):
@@ -476,7 +491,7 @@ def parse_claude_session(
                     first_prompt = preview
                 if preview:
                     last_prompt = preview
-                if first_prompt and not scan_all_prompts and (native_title or line_number >= 40):
+                if first_prompt and not scan_all_prompts and line_number >= 40:
                     break
                 if fast_sidebar and session_id and (line_number >= 200 or total_bytes >= 131072):
                     break
@@ -561,24 +576,17 @@ def claude_session_summary_from_path(path: Path) -> dict:
                     summary["cli_version"] = str(record.get("version"))
                 if not summary.get("source") and record.get("entrypoint"):
                     summary["source"] = str(record.get("entrypoint"))
-                if not summary.get("native_title"):
-                    native_title = str(
-                        record.get("name")
-                        or record.get("displayName")
-                        or record.get("sessionName")
-                        or record.get("title")
-                        or record.get("slug")
-                        or ""
-                    ).strip()
-                    if native_title:
-                        summary["native_title"] = native_title
+                native_title = claude_title_from_record(record)
+                if native_title and (record.get("type") in {"custom-title", "agent-name"} or not summary.get("native_title")):
+                    summary["native_title"] = native_title
                 if record.get("isSidechain") is True:
                     summary["sidechain"] = True
                 message = record.get("message")
                 if isinstance(message, dict) and not summary.get("model_provider") and message.get("model"):
                     summary["model_provider"] = str(message.get("model"))
                 if (
-                    summary.get("source")
+                    line_number >= 40
+                    and summary.get("source")
                     and summary.get("cwd")
                     and summary.get("timestamp")
                     and summary.get("native_title")
@@ -1233,7 +1241,15 @@ def agent_bin_for(args: argparse.Namespace, provider: str) -> str:
     return getattr(args, "codex_bin", default_codex_bin())
 
 
+def is_qgenie_bin(agent_bin: str) -> bool:
+    return Path(agent_bin).name == "qgenie"
+
+
 def resume_command(provider: str, agent_bin: str, session_id: str) -> list[str]:
+    if is_qgenie_bin(agent_bin):
+        if provider == "claude":
+            return [agent_bin, "claude", "--resume", session_id]
+        return [agent_bin, "codex", "resume", session_id]
     if provider == "claude":
         return [agent_bin, "--resume", session_id]
     return [agent_bin, "resume", session_id]
@@ -1702,6 +1718,12 @@ def box_border(left: str, right: str, label: str, width: int) -> str:
     return left + label + ("─" * max(0, inner_width - len(label))) + right
 
 
+def box_border_right(left: str, right: str, label: str, width: int) -> str:
+    inner_width = max(0, width - 2)
+    label = shorten(label, inner_width)
+    return left + ("─" * max(0, inner_width - len(label))) + label + right
+
+
 def box_content(text: str, width: int) -> str:
     inner_width = max(0, width - 4)
     return "│ " + fit_cell(text, inner_width) + " │"
@@ -1734,15 +1756,11 @@ def prompt_context_lines(session: Session, width: int) -> list[str]:
 def sidebar_card_title(session: Session, width: int, selected: bool) -> str:
     marker = "›" if selected else " "
     age = format_time(session.modified)[5:16]
-    provider = sidebar_provider_label(session.provider, width)
-    title = session.native_title or session.custom_title
-    custom = "★ " if session.custom_title else ""
-    label = f"─ {marker} {age} · {provider}"
-    if title:
-        label += f" · {custom}{title} "
+    if session.custom_title:
+        title = "★ " + session.custom_title
     else:
-        label += " "
-    return label
+        title = session.native_title
+    return f"─ {marker} {age} · {title} "
 
 
 def sidebar_card_lines(session: Session, width: int, selected: bool) -> list[str]:
@@ -1750,12 +1768,13 @@ def sidebar_card_lines(session: Session, width: int, selected: bool) -> list[str
         return [sidebar_line(session, width, selected)]
     context = prompt_context_lines(session, width)
     cwd_text = short_cwd(session.cwd, max(10, width - 10))
+    provider = sidebar_provider_label(session.provider, width)
     return [
         box_border("╭", "╮", sidebar_card_title(session, width, selected), width),
         box_content("cwd: " + cwd_text, width),
         box_content(context[0], width),
         box_content(context[1], width),
-        box_border("╰", "╯", f"─ {session.id[:12]} ", width),
+        box_border_right("╰", "╯", f"─ {provider} ·  {session.id[:12]} ─", width),
     ]
 
 
