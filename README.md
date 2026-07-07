@@ -447,3 +447,7 @@ rm -rf ~/.claude/session-tools
 ```
 
 Review the trash folder before deleting it if you used `delete`.
+
+## License
+
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).
